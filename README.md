@@ -61,6 +61,13 @@ http://localhost:3000/wpp?session=<token>
    ```
 3. Configure your reverse proxy (Traefik/Nginx) to forward HTTPS traffic to `http://127.0.0.1:3000`.
 
+## Dokploy / Docker deployment
+By default, Docker Compose maps the container port `3000` to host port `3001` to avoid conflicts if `3000` is already in use. Override with `HOST_PORT` if needed:
+
+```bash
+HOST_PORT=3000 docker compose up -d --build
+```
+
 ## Troubleshooting: redirect_uri mismatch
 If you see `redirect_uri mismatch`:
 - Confirm `FB_REDIRECT_URI` in `.env` matches the Meta app setting exactly.
