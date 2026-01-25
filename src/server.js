@@ -1,3 +1,8 @@
+console.log("[ENV CHECK] MYSQL_HOST =", process.env.MYSQL_HOST);
+console.log("[ENV CHECK] MYSQL_DATABASE =", process.env.MYSQL_DATABASE);
+console.log("[ENV CHECK] MYSQL_PORT =", process.env.MYSQL_PORT);
+console.log("[ENV CHECK] FB_REDIRECT_URI =", process.env.FB_REDIRECT_URI);
+
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const express = require("express");
