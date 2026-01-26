@@ -23,7 +23,30 @@ dotenv.config();
 
 const app = express();
 
-app.use(helmet());
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        "default-src": ["'self'"],
+        "script-src": [
+          "'self'",
+          "'unsafe-inline'",
+          "https://connect.facebook.net",
+          "https://www.facebook.com",
+          "https://web.facebook.com",
+        ],
+        "connect-src": [
+          "'self'",
+          "https://graph.facebook.com",
+        ],
+        "img-src": ["'self'", "data:", "https://www.facebook.com", "https://web.facebook.com"],
+        "frame-src": ["'self'", "https://www.facebook.com", "https://web.facebook.com"],
+      },
+    },
+  })
+);
+
 app.use(express.json({ limit: "1mb" }));
 app.use("/public", express.static(path.join(__dirname, "..", "public")));
 
