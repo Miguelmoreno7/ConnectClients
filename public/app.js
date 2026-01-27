@@ -73,15 +73,29 @@
   };
 
   const fbLoginCallback = (response) => {
+    console.log("[FB.login callback]", response);
+
     const auth = response && response.authResponse;
+
+    // En embedded signup, a veces el callback llega sin code aunque el popup siga/esté iniciando.
+    // No lo trates como error inmediato.
     if (auth && auth.code) {
       state.code = auth.code;
       setStatus("Facebook auth complete. Waiting for WhatsApp data…");
-      validateAndSubmit();
-    } else {
-      setStatus("Facebook login was cancelled or failed.", "error");
+      validateAndSubmit(); // esto solo debe enviar si ya tienes WA data también
+      return;
     }
+
+    // Si hay error explícito, sí muéstralo
+    if (response && response.error) {
+      setStatus(`Facebook login error: ${response.error.message || "Unknown"}`, "error");
+      return;
+    }
+
+    // Si no hay code, solo informa y espera (no error)
+    setStatus("Facebook popup opened. Complete the flow to continue…");
   };
+
 
   const launchEmbeddedSignup = () => {
     if (!window.FB) {
