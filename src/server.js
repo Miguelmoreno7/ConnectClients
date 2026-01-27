@@ -39,6 +39,8 @@ app.use(
         "connect-src": [
           "'self'",
           "https://graph.facebook.com",
+          "https://www.facebook.com",
+          "https://web.facebook.com",
         ],
         "img-src": ["'self'", "data:", "https://www.facebook.com", "https://web.facebook.com"],
         "frame-src": ["'self'", "https://www.facebook.com", "https://web.facebook.com"],
