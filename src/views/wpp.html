@@ -103,8 +103,9 @@
 
       FB.init({
         appId: cfg.appId,
+        autoLogAppEvents: true,
         xfbml: true,
-        version
+        version: version
       });
 
       window.__FB_INITIALIZED__ = true;
