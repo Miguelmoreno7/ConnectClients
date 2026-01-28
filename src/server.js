@@ -23,7 +23,7 @@ dotenv.config();
 
 const app = express();
 
-app.use(
+/* app.use(
   helmet({
     crossOriginOpenerPolicy: false,
     contentSecurityPolicy: {
@@ -48,7 +48,7 @@ app.use(
       },
     },
   })
-);
+); */
 
 app.use(express.json({ limit: "1mb" }));
 app.use("/public", express.static(path.join(__dirname, "..", "public")));
