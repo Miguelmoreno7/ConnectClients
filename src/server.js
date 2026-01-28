@@ -25,6 +25,7 @@ const app = express();
 
 app.use(
   helmet({
+    crossOriginOpenerPolicy: false,
     contentSecurityPolicy: {
       useDefaults: true,
       directives: {
