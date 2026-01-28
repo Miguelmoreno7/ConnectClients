@@ -7,9 +7,8 @@ const exchangeCodeForToken = async ({ code }) => {
   const params = new URLSearchParams({
     client_id: process.env.FB_CLIENT_ID,
     client_secret: process.env.FB_CLIENT_SECRET,
-    code,
-    grant_type: "authorization_code",
-    redirect_uri: process.env.FB_REDIRECT_URI
+    code: code,
+    grant_type: "authorization_code"
   });
 
   const response = await axios.post(`${graphBase}/oauth/access_token`, params, {
