@@ -1,4 +1,3 @@
-const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const express = require("express");
@@ -24,7 +23,6 @@ const {
 const app = express();
 
 const graphVersion = process.env.GRAPH_API_VERSION || "v23.0";
-const oauthStateSecret = process.env.OAUTH_STATE_SECRET || process.env.FB_CLIENT_SECRET || "state-secret";
 const facebookScopes = (process.env.FACEBOOK_SCOPES || "pages_show_list,pages_read_engagement,pages_manage_metadata,business_management")
   .split(",")
   .map((scope) => scope.trim())
@@ -34,7 +32,33 @@ const instagramScopes = (process.env.INSTAGRAM_SCOPES || "instagram_basic,instag
   .map((scope) => scope.trim())
   .filter(Boolean);
 
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginOpenerPolicy: false,
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        "default-src": ["'self'"],
+        "script-src": [
+          "'self'",
+          "'unsafe-inline'",
+          "https://connect.facebook.net",
+          "https://www.facebook.com",
+          "https://web.facebook.com",
+        ],
+        "connect-src": [
+          "'self'",
+          "https://graph.facebook.com",
+          "https://www.facebook.com",
+          "https://web.facebook.com",
+        ],
+        "img-src": ["'self'", "data:", "https://www.facebook.com", "https://web.facebook.com"],
+        "frame-src": ["'self'", "https://www.facebook.com", "https://web.facebook.com"],
+      },
+    },
+  })
+);
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "1mb" }));
 app.use("/public", express.static(path.join(__dirname, "..", "public")));
 
@@ -58,18 +82,13 @@ const maskValue = (value, visible = 4) => {
 };
 
 const signState = (payload) => {
-  const raw = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const sig = crypto.createHmac("sha256", oauthStateSecret).update(raw).digest("base64url");
-  return `${raw}.${sig}`;
+  return Buffer.from(JSON.stringify(payload)).toString("base64url");
 };
 
 const verifyState = (state) => {
-  if (!state || typeof state !== "string" || !state.includes(".")) return null;
-  const [raw, sig] = state.split(".");
-  const expectedSig = crypto.createHmac("sha256", oauthStateSecret).update(raw).digest("base64url");
-  if (sig !== expectedSig) return null;
+  if (!state || typeof state !== "string") return null;
   try {
-    return JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+    return JSON.parse(Buffer.from(state, "base64url").toString("utf8"));
   } catch {
     return null;
   }
