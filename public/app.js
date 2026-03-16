@@ -1,38 +1,101 @@
 (() => {
   const statusEl = document.getElementById("status");
-  const buttonEl = document.getElementById("embedded-signup");
+  const whatsappBtn = document.getElementById("embedded-signup");
+  const instagramBtn = document.getElementById("instagram-connect");
+  const facebookBtn = document.getElementById("facebook-connect");
+
+  const channelStatusEls = {
+    whatsapp: document.getElementById("status-whatsapp"),
+    instagram: document.getElementById("status-instagram"),
+    facebook: document.getElementById("status-facebook")
+  };
+
 
   const state = {
     code: null,
     phoneNumberId: null,
     wabaId: null,
-    submitting: false
+    submittingWhatsApp: false,
+    connectingSocial: false
+  };
+
+  let fbSdkReady = false;
+
+  const initFacebookSdk = () => {
+    if (fbSdkReady || !window.FB) return;
+    window.FB.init({
+      appId: window.__APP_CONFIG__.appId,
+      autoLogAppEvents: true,
+      xfbml: true,
+      version: window.__APP_CONFIG__.graphVersion
+    });
+    fbSdkReady = true;
+  };
+
+  const statusMap = {
+    not_connected: { text: "Not connected", className: "" },
+    pending: { text: "Not connected", className: "" },
+    connecting: { text: "Connecting", className: "connecting" },
+    connected: { text: "Connected", className: "connected" },
+    error: { text: "Error", className: "error" }
   };
 
   const setStatus = (message, type) => {
     statusEl.textContent = message;
     statusEl.classList.remove("status-success", "status-error");
-    if (type === "success") {
-      statusEl.classList.add("status-success");
-    }
-    if (type === "error") {
-      statusEl.classList.add("status-error");
+    if (type === "success") statusEl.classList.add("status-success");
+    if (type === "error") statusEl.classList.add("status-error");
+  };
+
+  const setChannelStatus = (channel, status, extraText) => {
+    const target = channelStatusEls[channel];
+    if (!target) return;
+    const normalized = statusMap[status] ? status : "not_connected";
+    const mapped = statusMap[normalized];
+    target.classList.remove("connected", "error", "connecting");
+    if (mapped.className) target.classList.add(mapped.className);
+    target.textContent = extraText ? `${mapped.text}: ${extraText}` : mapped.text;
+  };
+
+  const query = new URLSearchParams(window.location.search);
+  const callbackProvider = query.get("provider");
+  const callbackStatus = query.get("status");
+
+  if (callbackProvider && callbackStatus === "connected") {
+    setStatus(`${callbackProvider} connected successfully ✅`, "success");
+  } else if (callbackProvider && callbackStatus === "error") {
+    setStatus(`${callbackProvider} connection failed. Please retry.`, "error");
+  }
+
+  const refreshConnectionState = async () => {
+    try {
+      const response = await fetch(`/api/connections/state?session=${encodeURIComponent(window.__APP_CONFIG__.session)}`);
+      const data = await response.json();
+      if (!response.ok || !data.ok) return;
+
+      setChannelStatus("whatsapp", data.whatsapp?.status || "not_connected");
+      setChannelStatus(
+        "instagram",
+        data.instagram?.status || "not_connected",
+        data.instagram?.label || ""
+      );
+      setChannelStatus(
+        "facebook",
+        data.facebook?.status || "not_connected",
+        data.facebook?.label || ""
+      );
+    } catch {
+      // best effort state refresh
     }
   };
 
-  const validateAndSubmit = async () => {
-    if (
-      !state.code ||
-      !state.phoneNumberId ||
-      !state.wabaId ||
-      state.submitting
-    ) {
-      return;
-    }
+  const validateAndSubmitWhatsApp = async () => {
+    if (!state.code || !state.phoneNumberId || !state.wabaId || state.submittingWhatsApp) return;
 
-    state.submitting = true;
-    buttonEl.disabled = true;
-    setStatus("Completing onboarding…");
+    state.submittingWhatsApp = true;
+    whatsappBtn.disabled = true;
+    setChannelStatus("whatsapp", "connecting");
+    setStatus("Completing WhatsApp onboarding…");
 
     try {
       const response = await fetch("/api/onboarding/complete", {
@@ -48,60 +111,71 @@
       const data = await response.json();
 
       if (!response.ok || !data.ok) {
-        const message = data.message || "Onboarding failed. Please try again.";
-        setStatus(message, "error");
-        state.submitting = false;
-        buttonEl.disabled = false;
+        setStatus(data.message || "WhatsApp onboarding failed. Please try again.", "error");
+        setChannelStatus("whatsapp", "error");
+        state.submittingWhatsApp = false;
+        whatsappBtn.disabled = false;
         return;
       }
 
-      setStatus("Connected ✅", "success");
-    } catch (error) {
+      setStatus("WhatsApp connected ✅", "success");
+      setChannelStatus("whatsapp", "connected", data.waba_name || "");
+    } catch {
       setStatus("Unexpected error. Please retry.", "error");
-      state.submitting = false;
-      buttonEl.disabled = false;
+      setChannelStatus("whatsapp", "error");
+      state.submittingWhatsApp = false;
+      whatsappBtn.disabled = false;
+    }
+  };
+
+  const startOAuth = async (provider) => {
+    if (state.connectingSocial) return;
+    state.connectingSocial = true;
+
+    const btn = provider === "instagram" ? instagramBtn : facebookBtn;
+    btn.disabled = true;
+    setChannelStatus(provider, "connecting");
+
+    try {
+      const response = await fetch(
+        `/api/oauth/${provider}/start?session=${encodeURIComponent(window.__APP_CONFIG__.session)}`
+      );
+      const data = await response.json();
+      if (!response.ok || !data.ok || !data.auth_url) {
+        throw new Error(data.message || "Unable to start auth");
+      }
+      window.location.href = data.auth_url;
+    } catch (error) {
+      setChannelStatus(provider, "error");
+      setStatus(error.message || `Failed to start ${provider} connection`, "error");
+      btn.disabled = false;
+      state.connectingSocial = false;
     }
   };
 
   window.fbAsyncInit = function () {
-    window.FB.init({
-      appId: window.__APP_CONFIG__.appId,
-      autoLogAppEvents: true,
-      xfbml: true,
-      version: window.__APP_CONFIG__.graphVersion
-    });
+    initFacebookSdk();
   };
 
   const fbLoginCallback = (response) => {
-    console.log("[FB.login callback]", response);
-
     const auth = response && response.authResponse;
-
-    // En embedded signup, a veces el callback llega sin code aunque el popup siga/esté iniciando.
-    // No lo trates como error inmediato.
     if (auth && auth.code) {
       state.code = auth.code;
       setStatus("Facebook auth complete. Waiting for WhatsApp data…");
-      validateAndSubmit(); // esto solo debe enviar si ya tienes WA data también
-      return;
+      validateAndSubmitWhatsApp();
+    } else {
+      setStatus("Facebook login was cancelled or failed.", "error");
+      setChannelStatus("whatsapp", "error");
     }
-
-    // Si hay error explícito, sí muéstralo
-    if (response && response.error) {
-      setStatus(`Facebook login error: ${response.error.message || "Unknown"}`, "error");
-      return;
-    }
-
-    // Si no hay code, solo informa y espera (no error)
-    setStatus("Facebook popup opened. Complete the flow to continue…");
   };
 
-
   const launchEmbeddedSignup = () => {
-    if (!window.FB) {
-      setStatus("Facebook SDK not loaded yet.", "error");
+    initFacebookSdk();
+    if (!window.FB || !fbSdkReady) {
+      setStatus("Facebook SDK is still loading. Please try again in a moment.", "error");
       return;
     }
+    setChannelStatus("whatsapp", "connecting");
     setStatus("Launching WhatsApp Embedded Signup…");
     window.FB.login(fbLoginCallback, {
       config_id: window.__APP_CONFIG__.configId,
@@ -115,43 +189,40 @@
     });
   };
 
-  buttonEl.addEventListener("click", launchEmbeddedSignup);
+  whatsappBtn.addEventListener("click", launchEmbeddedSignup);
+  instagramBtn.addEventListener("click", () => startOAuth("instagram"));
+  facebookBtn.addEventListener("click", () => startOAuth("facebook"));
 
-  const allowedOrigins = new Set([
-    "https://www.facebook.com",
-    "https://web.facebook.com"
-  ]);
+  const allowedOrigins = new Set(["https://www.facebook.com", "https://web.facebook.com"]);
 
   window.addEventListener("message", (event) => {
-    if (!allowedOrigins.has(event.origin)) {
-      return;
-    }
+    if (!allowedOrigins.has(event.origin)) return;
 
     let payload;
     try {
       payload = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
-    } catch (error) {
+    } catch {
       return;
     }
 
-    if (!payload || payload.type !== "WA_EMBEDDED_SIGNUP") {
-      return;
-    }
+    if (!payload || payload.type !== "WA_EMBEDDED_SIGNUP") return;
 
     const eventName = payload.event;
-    if (
-      eventName === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING" ||
-      eventName === "FINISH"
-    ) {
+    if (eventName === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING" || eventName === "FINISH") {
       const data = payload.data || {};
       state.phoneNumberId = data.phone_number_id;
       state.wabaId = data.waba_id;
       setStatus("WhatsApp data received. Completing onboarding…");
-      validateAndSubmit();
+      validateAndSubmitWhatsApp();
     } else if (eventName === "CANCEL") {
-      setStatus("Signup cancelled.", "error");
+      setStatus("WhatsApp signup cancelled.", "error");
+      setChannelStatus("whatsapp", "error");
     } else if (eventName === "ERROR") {
-      setStatus("Signup error. Please retry.", "error");
+      setStatus("WhatsApp signup error. Please retry.", "error");
+      setChannelStatus("whatsapp", "error");
     }
   });
+
+  initFacebookSdk();
+  refreshConnectionState();
 })();
