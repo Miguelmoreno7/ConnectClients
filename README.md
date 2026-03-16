@@ -1,16 +1,22 @@
-# Connect WhatsApp Embedded Signup Patch
+# Connect WhatsApp / Instagram / Facebook Onboarding Patch
 
-This service temporarily replaces the WordPress `admin-ajax` onboarding flow with a Node.js app that reads/writes the same WordPress database table (`wp_wa_configurations`). It renders a public `/wpp?session=...` landing page for WhatsApp Embedded Signup and finalizes onboarding by calling the Meta Graph API.
+This service replaces the WordPress `admin-ajax` onboarding flow with a Node.js app that reads/writes the same WordPress MySQL database.
+
+It keeps WhatsApp onboarding in `wp_wa_configurations` and adds parallel social integrations in:
+- `wp_instagram`
+- `wp_facebook_users`
 
 ## Features
-- Validates one-time onboarding sessions stored in `wp_wa_configurations`.
-- Captures `code`, `phone_number_id`, and `waba_id`.
-- Exchanges code for access token and performs Graph API steps.
-- Updates the existing WordPress table without creating new tables.
-- Rate limits onboarding completion per IP.
+- Public onboarding landing: `/wpp?session=...`
+- Step 1 buttons with matching UI style:
+  - Connect WhatsApp
+  - Connect Instagram (Professional)
+  - Connect Facebook (Pages/business)
+- User-aware persistence using the same session→`user_id` linkage as WhatsApp.
+- One service with server-side OAuth handling and callback redirects back to onboarding.
 
 ## Environment variables
-Create a `.env` file with:
+Create a `.env` file:
 
 ```bash
 PORT=3000
@@ -31,15 +37,28 @@ WP_TABLE_PREFIX=wp_
 ADMIN_WHITELIST=2,6
 TOKEN_TTL_HOURS=72
 RATE_LIMIT_PER_MIN=20
+OAUTH_STATE_SECRET=change-me
+FACEBOOK_SCOPES=pages_show_list,pages_read_engagement,pages_manage_metadata,business_management
+INSTAGRAM_SCOPES=instagram_basic,instagram_manage_messages,pages_show_list,business_management
 ```
 
-> `FB_REDIRECT_URI` **must exactly match** the Meta App settings.
+## Required DB schema changes
+1) Existing WhatsApp table updates (already requested):
+- `wp_wa_configurations.onboarding_session`
+- `wp_wa_configurations.onboarding_expires_at`
+- `wp_wa_configurations.onboarding_status`
+- `wp_wa_configurations.onboarding_consumed_at`
 
-## Meta App settings checklist
-In the Facebook App configuration:
+2) New social integration tables:
+- Ensure `wp_instagram` and `wp_facebook_users` already exist in MySQL before starting the app.
+
+## Meta app settings checklist
 - **App Domains**: `connect.moviatech.com.mx`
 - **JS SDK allowed domains**: `https://connect.moviatech.com.mx`
-- **Valid OAuth Redirect URIs**: `https://connect.moviatech.com.mx/wpp`
+- **Valid OAuth Redirect URIs**:
+  - `https://connect.moviatech.com.mx/wpp`
+  - `https://connect.moviatech.com.mx/api/oauth/instagram/callback`
+  - `https://connect.moviatech.com.mx/api/oauth/facebook/callback`
 
 ## Local development
 ```bash
@@ -47,34 +66,26 @@ npm install
 npm run dev
 ```
 
-Visit:
+## Docker / Dokploy deployment
+```bash
+docker compose up -d --build
 ```
-http://localhost:3000/wpp?session=<token>
-```
 
-## Production deployment (VPS)
-1. Install dependencies and create `.env`.
-2. Start the service:
-   ```bash
-   npm install --production
-   npm start
-   ```
-3. Configure your reverse proxy (Traefik/Nginx) to forward HTTPS traffic to `http://127.0.0.1:3000`.
-
-## Dokploy / Docker deployment
-By default, Docker Compose maps the container port `3000` to a random available host port to avoid conflicts. Override with `HOST_PORT` if needed:
-
+By default, docker-compose maps container `3000` to a random free host port. Override if needed:
 ```bash
 HOST_PORT=3000 docker compose up -d --build
 ```
 
-## Troubleshooting: redirect_uri mismatch
-If you see `redirect_uri mismatch`:
-- Confirm `FB_REDIRECT_URI` in `.env` matches the Meta app setting exactly.
-- Ensure the domain is listed in **App Domains** and **Valid OAuth Redirect URIs**.
-- Double-check there are no trailing slashes or HTTP/HTTPS mismatch.
-
 ## Routes
-- `GET /health` → returns `ok`
-- `GET /wpp?session=...` → serves the Embedded Signup landing page
-- `POST /api/onboarding/complete` → finalizes onboarding
+- `GET /health` → `ok`
+- `GET /wpp?session=...` → onboarding page
+- `GET /api/connections/state?session=...` → provider statuses
+- `GET /api/oauth/instagram/start?session=...` → start Instagram OAuth
+- `GET /api/oauth/instagram/callback` → Instagram callback
+- `GET /api/oauth/facebook/start?session=...` → start Facebook OAuth
+- `GET /api/oauth/facebook/callback` → Facebook callback
+- `POST /api/onboarding/complete` → finish WhatsApp Embedded Signup
+
+## Troubleshooting: redirect_uri mismatch
+- Verify callback URLs in Meta exactly match `.env`/deployment URL.
+- Check HTTP vs HTTPS and trailing slash mismatches.
