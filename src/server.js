@@ -16,8 +16,9 @@ const {
   subscribeApps,
   exchangeOAuthCodeForToken,
   getFacebookMe,
-  getFacebookAccountsWithInstagram,
-  getFacebookPagesForUser
+  getFacebookPagesForUser,
+  exchangeInstagramCodeForToken,
+  getInstagramMe
 } = require("./meta");
 
 const app = express();
@@ -27,7 +28,7 @@ const facebookScopes = (process.env.FACEBOOK_SCOPES || "pages_show_list,pages_re
   .split(",")
   .map((scope) => scope.trim())
   .filter(Boolean);
-const instagramScopes = (process.env.INSTAGRAM_SCOPES || "instagram_basic,instagram_manage_messages,pages_show_list,business_management")
+const instagramScopes = (process.env.INSTAGRAM_SCOPES || "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments")
   .split(",")
   .map((scope) => scope.trim())
   .filter(Boolean);
@@ -282,16 +283,20 @@ app.get("/api/oauth/:provider/start", async (req, res) => {
 
   const scopes = provider === "instagram" ? instagramScopes : facebookScopes;
   const params = new URLSearchParams({
-    client_id: process.env.FB_CLIENT_ID,
+    client_id: provider === "instagram" ? (process.env.IG_APP_ID || process.env.FB_APP_ID || "") : process.env.FB_CLIENT_ID,
     redirect_uri: redirectUri,
     response_type: "code",
     scope: scopes.join(","),
     state
   });
 
+  const authUrl = provider === "instagram"
+    ? `https://www.instagram.com/oauth/authorize?${params.toString()}`
+    : `https://www.facebook.com/${graphVersion}/dialog/oauth?${params.toString()}`;
+
   res.json({
     ok: true,
-    auth_url: `https://www.facebook.com/${graphVersion}/dialog/oauth?${params.toString()}`
+    auth_url: authUrl
   });
 });
 
@@ -328,7 +333,9 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
     const callbackPath = provider === "instagram" ? "/api/oauth/instagram/callback" : "/api/oauth/facebook/callback";
     const redirectUri = `${process.env.BASE_URL}${callbackPath}`;
 
-    const tokenData = await exchangeOAuthCodeForToken({ code, redirectUri });
+    const tokenData = provider === "instagram"
+      ? await exchangeInstagramCodeForToken({ code, redirectUri })
+      : await exchangeOAuthCodeForToken({ code, redirectUri });
     const accessToken = tokenData.access_token;
 
     if (!accessToken) {
@@ -336,16 +343,11 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
     }
 
     if (provider === "instagram") {
-      const me = await getFacebookMe({ accessToken });
-
-      const pages = await getFacebookAccountsWithInstagram({ accessToken });
-
-      const pageWithIg = (pages.data || []).find((page) => page.instagram_business_account?.id);
-      if (!pageWithIg) {
+      const ig = await getInstagramMe({ accessToken });
+      if (!ig?.id) {
         throw new Error("instagram_professional_account_required");
       }
 
-      const ig = pageWithIg.instagram_business_account;
       const instagramTable = getTableName("instagram");
       await withConnection((connection) =>
         connection.query(
@@ -377,8 +379,8 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
             JSON.stringify(instagramScopes),
             code,
             JSON.stringify(tokenData),
-            JSON.stringify({ me, page: pageWithIg, ig }),
-            JSON.stringify({ page_id: pageWithIg.id, page_name: pageWithIg.name, fb_user_id: me.id })
+            JSON.stringify({ ig }),
+            JSON.stringify({ ig_user_id: ig.id })
           ]
         )
       );

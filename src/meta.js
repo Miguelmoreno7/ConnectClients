@@ -98,6 +98,33 @@ const getFacebookPagesForUser = async ({ accessToken }) => {
   return response.data;
 };
 
+const exchangeInstagramCodeForToken = async ({ code, redirectUri }) => {
+  const params = new URLSearchParams({
+    client_id: process.env.IG_APP_ID || process.env.FB_APP_ID,
+    client_secret: process.env.IG_APP_SECRET || process.env.FB_CLIENT_SECRET,
+    grant_type: "authorization_code",
+    redirect_uri: redirectUri,
+    code
+  });
+
+  const response = await axios.post("https://api.instagram.com/oauth/access_token", params, {
+    headers: { "Content-Type": "application/x-www-form-urlencoded" }
+  });
+
+  return response.data;
+};
+
+const getInstagramMe = async ({ accessToken }) => {
+  const response = await axios.get("https://graph.instagram.com/me", {
+    params: {
+      fields: "id,username,account_type",
+      access_token: accessToken
+    }
+  });
+
+  return response.data;
+};
+
 module.exports = {
   exchangeCodeForToken,
   getPhoneNumberDetails,
@@ -107,5 +134,7 @@ module.exports = {
   exchangeOAuthCodeForToken,
   getFacebookMe,
   getFacebookAccountsWithInstagram,
-  getFacebookPagesForUser
+  getFacebookPagesForUser,
+  exchangeInstagramCodeForToken,
+  getInstagramMe
 };

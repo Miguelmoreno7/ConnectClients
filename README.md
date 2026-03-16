@@ -39,7 +39,9 @@ TOKEN_TTL_HOURS=72
 RATE_LIMIT_PER_MIN=20
 OAUTH_STATE_SECRET=change-me
 FACEBOOK_SCOPES=pages_show_list,pages_read_engagement,pages_manage_metadata,business_management
-INSTAGRAM_SCOPES=instagram_basic,instagram_manage_messages,pages_show_list,business_management
+IG_APP_ID=...
+IG_APP_SECRET=...
+INSTAGRAM_SCOPES=instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments
 ```
 
 ## Required DB schema changes
