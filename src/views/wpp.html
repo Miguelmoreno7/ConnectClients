@@ -132,6 +132,37 @@
         session: "__SESSION__",
         baseUrl: "__BASE_URL__"
       };
+      // Guard to avoid re-initializing FB SDK across repeated opens/tests
+      window.__FB_INITIALIZED__ = false;
+
+      window.initFacebookSDKOnce = function () {
+        if (window.__FB_INITIALIZED__) return;
+        if (!window.FB) return;
+
+        const cfg = window.__APP_CONFIG__ || {};
+        const version = String(cfg.graphVersion || "v23.0").trim();
+
+        // Basic validation to prevent "init not called with valid version"
+        if (!/^v\d+\.\d+$/.test(version)) {
+          console.error("Invalid graphVersion:", cfg.graphVersion);
+          return;
+        }
+
+        FB.init({
+          appId: cfg.appId,
+          autoLogAppEvents: true,
+          xfbml: true,
+          version: version
+        });
+
+        window.__FB_INITIALIZED__ = true;
+        console.log("[FB] initialized:", version);
+      };
+
+      // Called by the FB SDK when it finishes loading
+      window.fbAsyncInit = function () {
+        window.initFacebookSDKOnce();
+      };
     </script>
     <script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
     <script src="/public/app.js"></script>

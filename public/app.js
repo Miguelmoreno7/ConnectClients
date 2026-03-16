@@ -70,15 +70,6 @@
     }
   };
 
-  window.fbAsyncInit = function () {
-    window.FB.init({
-      appId: window.__APP_CONFIG__.appId,
-      autoLogAppEvents: true,
-      xfbml: true,
-      version: window.__APP_CONFIG__.graphVersion
-    });
-  };
-
   const fbLoginCallback = (response) => {
     console.log("[FB.login callback]", response);
 
@@ -105,6 +96,9 @@
 
 
   const launchEmbeddedSignup = () => {
+    if (typeof window.initFacebookSDKOnce === "function") {
+      window.initFacebookSDKOnce();
+    }
     if (!window.FB) {
       setStatus("Facebook SDK not loaded yet.", "error");
       return;
