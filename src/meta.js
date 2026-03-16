@@ -3,13 +3,12 @@ const axios = require("axios");
 const graphVersion = process.env.GRAPH_API_VERSION || "v23.0";
 const graphBase = `https://graph.facebook.com/${graphVersion}`;
 
-const exchangeCodeForToken = async ({ code, redirectUri }) => {
+const exchangeCodeForToken = async ({ code }) => {
   const params = new URLSearchParams({
     client_id: process.env.FB_CLIENT_ID,
     client_secret: process.env.FB_CLIENT_SECRET,
-    code,
-    grant_type: "authorization_code",
-    redirect_uri: redirectUri || process.env.FB_REDIRECT_URI
+    code: code,
+    grant_type: "authorization_code"
   });
 
   const response = await axios.post(`${graphBase}/oauth/access_token`, params, {
@@ -19,47 +18,46 @@ const exchangeCodeForToken = async ({ code, redirectUri }) => {
   return response.data;
 };
 
-const graphGet = async (path, { accessToken, params } = {}) => {
-  const response = await axios.get(`${graphBase}${path}`, {
-    params,
-    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined
+const getPhoneNumberDetails = async ({ phoneNumberId, accessToken }) => {
+  const response = await axios.get(`${graphBase}/${phoneNumberId}`, {
+    params: { fields: "is_on_biz_app,platform_type" },
+    headers: { Authorization: `Bearer ${accessToken}` }
   });
+
   return response.data;
 };
 
-const graphPost = async (path, { accessToken, body, params } = {}) => {
-  const response = await axios.post(`${graphBase}${path}`, body || null, {
-    params,
-    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined
-  });
+const registerPhoneNumber = async ({ phoneNumberId, accessToken, pin }) => {
+  const response = await axios.post(
+    `${graphBase}/${phoneNumberId}/register`,
+    { messaging_product: "whatsapp", pin },
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+
   return response.data;
 };
 
-const getPhoneNumberDetails = async ({ phoneNumberId, accessToken }) =>
-  graphGet(`/${phoneNumberId}`, {
-    accessToken,
-    params: { fields: "is_on_biz_app,platform_type" }
+const getWabaName = async ({ wabaId, accessToken }) => {
+  const response = await axios.get(`${graphBase}/${wabaId}`, {
+    params: { fields: "name" },
+    headers: { Authorization: `Bearer ${accessToken}` }
   });
 
-const registerPhoneNumber = async ({ phoneNumberId, accessToken, pin }) =>
-  graphPost(`/${phoneNumberId}/register`, {
-    accessToken,
-    body: { messaging_product: "whatsapp", pin }
-  });
+  return response.data;
+};
 
-const getWabaName = async ({ wabaId, accessToken }) =>
-  graphGet(`/${wabaId}`, {
-    accessToken,
-    params: { fields: "name" }
-  });
+const subscribeApps = async ({ wabaId, accessToken }) => {
+  const response = await axios.post(
+    `${graphBase}/${wabaId}/subscribed_apps`,
+    null,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
 
-const subscribeApps = async ({ wabaId, accessToken }) =>
-  graphPost(`/${wabaId}/subscribed_apps`, { accessToken });
+  return response.data;
+};
 
 module.exports = {
   exchangeCodeForToken,
-  graphGet,
-  graphPost,
   getPhoneNumberDetails,
   registerPhoneNumber,
   getWabaName,
