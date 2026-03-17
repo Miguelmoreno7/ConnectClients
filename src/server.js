@@ -112,7 +112,7 @@ const getSessionRecord = async (connection, session, { lock = false } = {}) => {
 
 // Reads latest Instagram/Facebook connection status for one user_id.
 const getConnectionState = async (userId) => {
-  const instagramTable = getTableName("instagram");
+  const instagramTable = getTableName("instagram_users");
   const facebookTable = getTableName("facebook_users");
 
   return withConnection(async (connection) => {
@@ -164,7 +164,7 @@ const getConnectionState = async (userId) => {
 
 // Upserts social provider error details for troubleshooting/retry UX.
 const updateIntegrationError = async ({ provider, userId, errorMessage, metadata }) => {
-  const table = provider === "facebook" ? getTableName("facebook_users") : getTableName("instagram");
+  const table = provider === "facebook" ? getTableName("facebook_users") : getTableName("instagram_users");
   await withConnection((connection) =>
     connection.query(
       `INSERT INTO ${table} (user_id, status, last_error, metadata, updated_at, created_at)
@@ -357,7 +357,7 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
         throw new Error("instagram_professional_account_required");
       }
 
-      const instagramTable = getTableName("instagram");
+      const instagramTable = getTableName("instagram_users");
       await withConnection((connection) =>
         connection.query(
           `INSERT INTO ${instagramTable}

@@ -3,7 +3,7 @@
 This service replaces the WordPress `admin-ajax` onboarding flow with a Node.js app that reads/writes the same WordPress MySQL database.
 
 It keeps WhatsApp onboarding in `wp_wa_configurations` and adds parallel social integrations in:
-- `wp_instagram`
+- `wp_instagram_users`
 - `wp_facebook_users`
 
 ## Features
@@ -53,7 +53,7 @@ INSTAGRAM_SCOPES=instagram_business_basic,instagram_business_content_publish,ins
 - `wp_wa_configurations.onboarding_consumed_at`
 
 2) New social integration tables:
-- Ensure `wp_instagram` and `wp_facebook_users` already exist in MySQL before starting the app.
+- Ensure `wp_instagram_users` and `wp_facebook_users` already exist in MySQL before starting the app.
 
 ## Meta app settings checklist
 - **App Domains**: `connect.moviatech.com.mx`
