@@ -54,6 +54,7 @@ INSTAGRAM_SCOPES=instagram_business_basic,instagram_business_content_publish,ins
 
 2) New social integration tables:
 - Ensure `wp_instagram_users` and `wp_facebook_users` already exist in MySQL before starting the app.
+- Recommended social-session columns (optional but used when present): `onboarding_session`, `onboarding_status`, `onboarding_consumed_at`.
 
 ## Meta app settings checklist
 - **App Domains**: `connect.moviatech.com.mx`

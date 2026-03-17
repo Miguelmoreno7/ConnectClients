@@ -5,6 +5,9 @@
   const buttonEl = document.getElementById("embedded-signup");
   const instagramButtonEl = document.getElementById("instagram-connect");
   const facebookButtonEl = document.getElementById("facebook-connect");
+  const whatsappBadgeEl = document.getElementById("status-whatsapp");
+  const instagramBadgeEl = document.getElementById("status-instagram");
+  const facebookBadgeEl = document.getElementById("status-facebook");
 
   // Mutable state for WhatsApp embedded signup completion flow.
   const state = {
@@ -30,6 +33,72 @@
   const setButtonBusy = (button, busy) => {
     if (!button) return;
     button.disabled = busy;
+  };
+
+  const setBubble = (badge, text, cls) => {
+    if (!badge) return;
+    badge.textContent = text;
+    badge.classList.remove("connected", "error", "connecting");
+    if (cls) badge.classList.add(cls);
+  };
+
+  const applyProviderState = ({ provider, status: providerStatus, label }) => {
+    const map = {
+      instagram: { button: instagramButtonEl, badge: instagramBadgeEl },
+      facebook: { button: facebookButtonEl, badge: facebookBadgeEl },
+      whatsapp: { button: buttonEl, badge: whatsappBadgeEl }
+    };
+
+    const target = map[provider];
+    if (!target) return;
+
+    if (providerStatus === "connected" || providerStatus === "completed") {
+      setBubble(target.badge, label ? `Connected: ${label}` : "Connected", "connected");
+      setButtonBusy(target.button, true);
+      return;
+    }
+
+    if (providerStatus === "error" || providerStatus === "failed") {
+      setBubble(target.badge, "Error", "error");
+      setButtonBusy(target.button, false);
+      return;
+    }
+
+    if (providerStatus === "connecting" || providerStatus === "pending") {
+      setBubble(target.badge, "Connecting", "connecting");
+      setButtonBusy(target.button, false);
+      return;
+    }
+
+    setBubble(target.badge, "Not connected", null);
+    setButtonBusy(target.button, false);
+  };
+
+  const refreshConnectionState = async () => {
+    try {
+      const response = await fetch(
+        `/api/connections/state?session=${encodeURIComponent(window.__APP_CONFIG__.session)}`
+      );
+      const data = await response.json();
+      if (!response.ok || !data.ok) return;
+
+      applyProviderState({
+        provider: "instagram",
+        status: data.instagram?.status,
+        label: data.instagram?.label
+      });
+      applyProviderState({
+        provider: "facebook",
+        status: data.facebook?.status,
+        label: data.facebook?.label
+      });
+      applyProviderState({
+        provider: "whatsapp",
+        status: data.whatsapp?.status
+      });
+    } catch {
+      // Best effort, keep UI defaults if state endpoint fails.
+    }
   };
 
   // Sends WhatsApp completion request once code + WA IDs are available.
@@ -69,6 +138,7 @@
       }
 
       setStatus("Connected ✅", "success");
+      applyProviderState({ provider: "whatsapp", status: "connected" });
     } catch (error) {
       setStatus("Unexpected error. Please retry.", "error");
       state.submitting = false;
@@ -130,6 +200,7 @@
     try {
       setButtonBusy(button, true);
       setStatus(`Starting ${label} connection…`);
+      applyProviderState({ provider, status: "connecting" });
 
       const response = await fetch(
         `/api/oauth/${provider}/start?session=${encodeURIComponent(window.__APP_CONFIG__.session)}`
@@ -206,9 +277,13 @@
   const status = query.get("status");
   if (provider && status === "connected") {
     setStatus(`${provider} connected successfully ✅`, "success");
+    applyProviderState({ provider, status: "connected" });
   } else if (provider && status === "error") {
     setStatus(`${provider} connection failed. Please retry.`, "error");
     setButtonBusy(instagramButtonEl, false);
     setButtonBusy(facebookButtonEl, false);
+    applyProviderState({ provider, status: "error" });
   }
+
+  refreshConnectionState();
 })();

@@ -111,7 +111,7 @@ const getSessionRecord = async (connection, session, { lock = false } = {}) => {
 };
 
 // Reads latest Instagram/Facebook connection status for one user_id.
-const getConnectionState = async (userId) => {
+const getConnectionState = async ({ userId, session }) => {
   const instagramTable = getTableName("instagram_users");
   const facebookTable = getTableName("facebook_users");
 
@@ -123,10 +123,28 @@ const getConnectionState = async (userId) => {
        ORDER BY id DESC
        LIMIT 1`,
       [userId]
-    ).catch((error) => {
+    ).catch(async (error) => {
       if (error.code === "ER_NO_SUCH_TABLE") return [[]];
       throw error;
     });
+
+    let scopedIgRows = igRows;
+    try {
+      const [bySessionRows] = await connection.query(
+        `SELECT status, instagram_username, account_type, updated_at, last_error, last_connected_at
+         FROM ${instagramTable}
+         WHERE user_id = ?
+           AND onboarding_session = ?
+         ORDER BY id DESC
+         LIMIT 1`,
+        [userId, session]
+      );
+      if (bySessionRows?.length) scopedIgRows = bySessionRows;
+    } catch (error) {
+      if (error.code !== "ER_BAD_FIELD_ERROR" && error.code !== "ER_NO_SUCH_TABLE") {
+        throw error;
+      }
+    }
 
     const [fbRows] = await connection.query(
       `SELECT status, page_name, updated_at, last_error, last_connected_at
@@ -140,22 +158,40 @@ const getConnectionState = async (userId) => {
       throw error;
     });
 
+    let scopedFbRows = fbRows;
+    try {
+      const [bySessionRows] = await connection.query(
+        `SELECT status, page_name, updated_at, last_error, last_connected_at
+         FROM ${facebookTable}
+         WHERE user_id = ?
+           AND onboarding_session = ?
+         ORDER BY id DESC
+         LIMIT 1`,
+        [userId, session]
+      );
+      if (bySessionRows?.length) scopedFbRows = bySessionRows;
+    } catch (error) {
+      if (error.code !== "ER_BAD_FIELD_ERROR" && error.code !== "ER_NO_SUCH_TABLE") {
+        throw error;
+      }
+    }
+
     return {
-      instagram: igRows?.[0]
+      instagram: scopedIgRows?.[0]
         ? {
-            status: igRows[0].status,
-            label: igRows[0].instagram_username || "Instagram account",
-            account_type: igRows[0].account_type || null,
-            last_error: igRows[0].last_error || null,
-            last_connected_at: igRows[0].last_connected_at || null
+            status: scopedIgRows[0].status,
+            label: scopedIgRows[0].instagram_username || "Instagram account",
+            account_type: scopedIgRows[0].account_type || null,
+            last_error: scopedIgRows[0].last_error || null,
+            last_connected_at: scopedIgRows[0].last_connected_at || null
           }
         : { status: "not_connected" },
-      facebook: fbRows?.[0]
+      facebook: scopedFbRows?.[0]
         ? {
-            status: fbRows[0].status,
-            label: fbRows[0].page_name || "Facebook page",
-            last_error: fbRows[0].last_error || null,
-            last_connected_at: fbRows[0].last_connected_at || null
+            status: scopedFbRows[0].status,
+            label: scopedFbRows[0].page_name || "Facebook page",
+            last_error: scopedFbRows[0].last_error || null,
+            last_connected_at: scopedFbRows[0].last_connected_at || null
           }
         : { status: "not_connected" }
     };
@@ -249,7 +285,7 @@ app.get("/api/connections/state", async (req, res) => {
     return;
   }
 
-  const integrations = await getConnectionState(sessionRow.user_id);
+  const integrations = await getConnectionState({ userId: sessionRow.user_id, session });
   res.json({
     ok: true,
     whatsapp: { status: "pending" },
@@ -358,41 +394,71 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
       }
 
       const instagramTable = getTableName("instagram_users");
-      await withConnection((connection) =>
-        connection.query(
-          `INSERT INTO ${instagramTable}
-          (user_id, status, instagram_user_id, instagram_username, account_type, access_token,
-          refresh_token, token_expires_at, scopes, auth_code, raw_auth_payload, raw_response,
-          created_at, updated_at, last_connected_at, last_error, metadata)
-          VALUES (?, 'connected', ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, NOW(), NOW(), NOW(), NULL, ?)
-          ON DUPLICATE KEY UPDATE
-            status = VALUES(status),
-            instagram_user_id = VALUES(instagram_user_id),
-            instagram_username = VALUES(instagram_username),
-            account_type = VALUES(account_type),
-            access_token = VALUES(access_token),
-            scopes = VALUES(scopes),
-            auth_code = VALUES(auth_code),
-            raw_auth_payload = VALUES(raw_auth_payload),
-            raw_response = VALUES(raw_response),
-            updated_at = NOW(),
-            last_connected_at = NOW(),
-            last_error = NULL,
-            metadata = VALUES(metadata)`,
-          [
-            userId,
-            ig.id,
-            ig.username || null,
-            ig.account_type || null,
-            accessToken,
-            JSON.stringify(instagramScopes),
-            code,
-            JSON.stringify(tokenData),
-            JSON.stringify({ ig }),
-            JSON.stringify({ ig_user_id: ig.id })
-          ]
-        )
-      );
+      const instagramParams = [
+        userId,
+        ig.id,
+        ig.username || null,
+        ig.account_type || null,
+        accessToken,
+        JSON.stringify(instagramScopes),
+        code,
+        JSON.stringify(tokenData),
+        JSON.stringify({ ig_user_id: ig.id })
+      ];
+      await withConnection(async (connection) => {
+        try {
+          await connection.query(
+            `INSERT INTO ${instagramTable}
+            (user_id, status, instagram_user_id, instagram_username, account_type, access_token,
+            refresh_token, token_expires_at, scopes, auth_code, raw_auth_payload, raw_response,
+            onboarding_session, onboarding_status, onboarding_consumed_at,
+            created_at, updated_at, last_connected_at, last_error, metadata)
+            VALUES (?, 'connected', ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, 'completed', NOW(), NOW(), NOW(), NOW(), NULL, ?)
+            ON DUPLICATE KEY UPDATE
+              status = VALUES(status),
+              instagram_user_id = VALUES(instagram_user_id),
+              instagram_username = VALUES(instagram_username),
+              account_type = VALUES(account_type),
+              access_token = VALUES(access_token),
+              scopes = VALUES(scopes),
+              auth_code = VALUES(auth_code),
+              raw_auth_payload = VALUES(raw_auth_payload),
+              raw_response = VALUES(raw_response),
+              onboarding_session = VALUES(onboarding_session),
+              onboarding_status = 'completed',
+              onboarding_consumed_at = NOW(),
+              updated_at = NOW(),
+              last_connected_at = NOW(),
+              last_error = NULL,
+              metadata = VALUES(metadata)`,
+            [...instagramParams.slice(0, 8), JSON.stringify({ ig }), session, ...instagramParams.slice(8)]
+          );
+        } catch (error) {
+          if (error.code !== "ER_BAD_FIELD_ERROR") throw error;
+          await connection.query(
+            `INSERT INTO ${instagramTable}
+            (user_id, status, instagram_user_id, instagram_username, account_type, access_token,
+            refresh_token, token_expires_at, scopes, auth_code, raw_auth_payload, raw_response,
+            created_at, updated_at, last_connected_at, last_error, metadata)
+            VALUES (?, 'connected', ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, NOW(), NOW(), NOW(), NULL, ?)
+            ON DUPLICATE KEY UPDATE
+              status = VALUES(status),
+              instagram_user_id = VALUES(instagram_user_id),
+              instagram_username = VALUES(instagram_username),
+              account_type = VALUES(account_type),
+              access_token = VALUES(access_token),
+              scopes = VALUES(scopes),
+              auth_code = VALUES(auth_code),
+              raw_auth_payload = VALUES(raw_auth_payload),
+              raw_response = VALUES(raw_response),
+              updated_at = NOW(),
+              last_connected_at = NOW(),
+              last_error = NULL,
+              metadata = VALUES(metadata)`,
+            [...instagramParams.slice(0, 8), JSON.stringify({ ig }), ...instagramParams.slice(8)]
+          );
+        }
+      });
     }
 
     // Facebook Pages callback branch.
@@ -402,41 +468,71 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
       const firstPage = pages.data?.[0] || null;
 
       const facebookTable = getTableName("facebook_users");
-      await withConnection((connection) =>
-        connection.query(
-          `INSERT INTO ${facebookTable}
-          (user_id, status, facebook_user_id, page_id, page_name, access_token,
-          refresh_token, token_expires_at, scopes, auth_code, raw_auth_payload, raw_response,
-          created_at, updated_at, last_connected_at, last_error, metadata)
-          VALUES (?, 'connected', ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, NOW(), NOW(), NOW(), NULL, ?)
-          ON DUPLICATE KEY UPDATE
-            status = VALUES(status),
-            facebook_user_id = VALUES(facebook_user_id),
-            page_id = VALUES(page_id),
-            page_name = VALUES(page_name),
-            access_token = VALUES(access_token),
-            scopes = VALUES(scopes),
-            auth_code = VALUES(auth_code),
-            raw_auth_payload = VALUES(raw_auth_payload),
-            raw_response = VALUES(raw_response),
-            updated_at = NOW(),
-            last_connected_at = NOW(),
-            last_error = NULL,
-            metadata = VALUES(metadata)`,
-          [
-            userId,
-            me.id,
-            firstPage?.id || null,
-            firstPage?.name || null,
-            accessToken,
-            JSON.stringify(facebookScopes),
-            code,
-            JSON.stringify(tokenData),
-            JSON.stringify({ me, pages }),
-            JSON.stringify({ page_perms: firstPage?.perms || [] })
-          ]
-        )
-      );
+      const facebookParams = [
+        userId,
+        me.id,
+        firstPage?.id || null,
+        firstPage?.name || null,
+        accessToken,
+        JSON.stringify(facebookScopes),
+        code,
+        JSON.stringify(tokenData),
+        JSON.stringify({ page_perms: firstPage?.perms || [] })
+      ];
+      await withConnection(async (connection) => {
+        try {
+          await connection.query(
+            `INSERT INTO ${facebookTable}
+            (user_id, status, facebook_user_id, page_id, page_name, access_token,
+            refresh_token, token_expires_at, scopes, auth_code, raw_auth_payload, raw_response,
+            onboarding_session, onboarding_status, onboarding_consumed_at,
+            created_at, updated_at, last_connected_at, last_error, metadata)
+            VALUES (?, 'connected', ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, 'completed', NOW(), NOW(), NOW(), NOW(), NULL, ?)
+            ON DUPLICATE KEY UPDATE
+              status = VALUES(status),
+              facebook_user_id = VALUES(facebook_user_id),
+              page_id = VALUES(page_id),
+              page_name = VALUES(page_name),
+              access_token = VALUES(access_token),
+              scopes = VALUES(scopes),
+              auth_code = VALUES(auth_code),
+              raw_auth_payload = VALUES(raw_auth_payload),
+              raw_response = VALUES(raw_response),
+              onboarding_session = VALUES(onboarding_session),
+              onboarding_status = 'completed',
+              onboarding_consumed_at = NOW(),
+              updated_at = NOW(),
+              last_connected_at = NOW(),
+              last_error = NULL,
+              metadata = VALUES(metadata)`,
+            [...facebookParams.slice(0, 8), JSON.stringify({ me, pages }), session, ...facebookParams.slice(8)]
+          );
+        } catch (error) {
+          if (error.code !== "ER_BAD_FIELD_ERROR") throw error;
+          await connection.query(
+            `INSERT INTO ${facebookTable}
+            (user_id, status, facebook_user_id, page_id, page_name, access_token,
+            refresh_token, token_expires_at, scopes, auth_code, raw_auth_payload, raw_response,
+            created_at, updated_at, last_connected_at, last_error, metadata)
+            VALUES (?, 'connected', ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, NOW(), NOW(), NOW(), NULL, ?)
+            ON DUPLICATE KEY UPDATE
+              status = VALUES(status),
+              facebook_user_id = VALUES(facebook_user_id),
+              page_id = VALUES(page_id),
+              page_name = VALUES(page_name),
+              access_token = VALUES(access_token),
+              scopes = VALUES(scopes),
+              auth_code = VALUES(auth_code),
+              raw_auth_payload = VALUES(raw_auth_payload),
+              raw_response = VALUES(raw_response),
+              updated_at = NOW(),
+              last_connected_at = NOW(),
+              last_error = NULL,
+              metadata = VALUES(metadata)`,
+            [...facebookParams.slice(0, 8), JSON.stringify({ me, pages }), ...facebookParams.slice(8)]
+          );
+        }
+      });
     }
 
     res.redirect(`/wpp?session=${encodeURIComponent(session)}&provider=${provider}&status=connected`);
