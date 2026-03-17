@@ -1,5 +1,7 @@
+// MySQL pool + helpers for WordPress-prefixed table access.
 const mysql = require("mysql2/promise");
 
+// Shared connection pool for all DB operations in the service.
 const pool = mysql.createPool({
   host: process.env.MYSQL_HOST,
   port: Number(process.env.MYSQL_PORT || 3306),
@@ -11,11 +13,13 @@ const pool = mysql.createPool({
   queueLimit: 0
 });
 
+// Builds a table name using configurable WP prefix (e.g. wp_ + wa_configurations).
 const getTableName = (suffix) => {
   const prefix = process.env.WP_TABLE_PREFIX || "wp_";
   return `${prefix}${suffix}`;
 };
 
+// Runs a callback with a pooled connection and always releases the connection.
 const withConnection = async (fn) => {
   const connection = await pool.getConnection();
   try {

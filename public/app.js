@@ -1,9 +1,12 @@
+// Frontend controller for onboarding UI (WhatsApp + Instagram + Facebook).
 (() => {
+  // Resolve DOM nodes used by channel connection actions and status text.
   const statusEl = document.getElementById("status");
   const buttonEl = document.getElementById("embedded-signup");
   const instagramButtonEl = document.getElementById("instagram-connect");
   const facebookButtonEl = document.getElementById("facebook-connect");
 
+  // Mutable state for WhatsApp embedded signup completion flow.
   const state = {
     code: null,
     phoneNumberId: null,
@@ -11,6 +14,7 @@
     submitting: false
   };
 
+  // Updates main status message with optional success/error styling.
   const setStatus = (message, type) => {
     statusEl.textContent = message;
     statusEl.classList.remove("status-success", "status-error");
@@ -22,11 +26,13 @@
     }
   };
 
+  // Disables/enables a specific button while async action is in flight.
   const setButtonBusy = (button, busy) => {
     if (!button) return;
     button.disabled = busy;
   };
 
+  // Sends WhatsApp completion request once code + WA IDs are available.
   const validateAndSubmit = async () => {
     if (
       !state.code ||
@@ -70,6 +76,7 @@
     }
   };
 
+  // Handles FB.login callback for WhatsApp embedded signup.
   const fbLoginCallback = (response) => {
     console.log("[FB.login callback]", response);
 
@@ -95,6 +102,7 @@
   };
 
 
+  // Starts WhatsApp Embedded Signup popup flow.
   const launchEmbeddedSignup = () => {
     if (typeof window.initFacebookSDKOnce === "function") {
       window.initFacebookSDKOnce();
@@ -116,6 +124,7 @@
     });
   };
 
+  // Starts OAuth flow for Instagram/Facebook via backend start endpoint.
   const startOAuthConnection = async (provider, button, label) => {
     if (!button) return;
     try {
@@ -157,6 +166,7 @@
     "https://web.facebook.com"
   ]);
 
+  // Listens for WA_EMBEDDED_SIGNUP postMessage events from FB origins.
   window.addEventListener("message", (event) => {
     if (!allowedOrigins.has(event.origin)) {
       return;
@@ -190,6 +200,7 @@
     }
   });
 
+  // Reads callback query params to show user-friendly social connection result.
   const query = new URLSearchParams(window.location.search);
   const provider = query.get("provider");
   const status = query.get("status");

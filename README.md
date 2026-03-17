@@ -38,6 +38,7 @@ ADMIN_WHITELIST=2,6
 TOKEN_TTL_HOURS=72
 RATE_LIMIT_PER_MIN=20
 OAUTH_STATE_SECRET=change-me
+SESSION_SECRET=change-me
 FACEBOOK_SCOPES=pages_show_list,pages_read_engagement,pages_manage_metadata,business_management
 IG_APP_ID=...
 IG_APP_SECRET=...

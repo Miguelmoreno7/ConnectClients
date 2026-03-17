@@ -1,3 +1,4 @@
+// Express server for WhatsApp onboarding + Instagram/Facebook OAuth connections.
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const express = require("express");
@@ -18,12 +19,15 @@ const {
   getFacebookMe,
   getFacebookPagesForUser,
   exchangeInstagramCodeForToken,
-  getInstagramMe
+  getInstagramMe,
+  createSignedState,
+  parseSignedState
 } = require("./meta");
 
 const app = express();
 
 const graphVersion = process.env.GRAPH_API_VERSION || "v23.0";
+const stateSecret = process.env.SESSION_SECRET || process.env.OAUTH_STATE_SECRET || process.env.IG_APP_SECRET || process.env.FB_CLIENT_SECRET;
 const facebookScopes = (process.env.FACEBOOK_SCOPES || "pages_show_list,pages_read_engagement,pages_manage_metadata,business_management")
   .split(",")
   .map((scope) => scope.trim())
@@ -70,31 +74,27 @@ const limiter = rateLimit({
   legacyHeaders: false
 });
 
+// Validates onboarding session token format before any DB/API work.
 const validateSessionToken = (session) => {
   if (!session || typeof session !== "string") return false;
   if (session.length < 10 || session.length > 64) return false;
   return /^[A-Za-z0-9_-]+$/.test(session);
 };
 
+// Masks sensitive values in logs (never print full tokens/IDs).
 const maskValue = (value, visible = 4) => {
   if (!value || typeof value !== "string") return "";
   if (value.length <= visible) return "*".repeat(value.length);
   return `${"*".repeat(value.length - visible)}${value.slice(-visible)}`;
 };
 
-const signState = (payload) => {
-  return Buffer.from(JSON.stringify(payload)).toString("base64url");
-};
+// Creates signed OAuth state payload for callback integrity.
+const signState = (payload) => createSignedState({ payload, secret: stateSecret });
 
-const verifyState = (state) => {
-  if (!state || typeof state !== "string") return null;
-  try {
-    return JSON.parse(Buffer.from(state, "base64url").toString("utf8"));
-  } catch {
-    return null;
-  }
-};
+// Verifies and parses OAuth state payload from callback.
+const verifyState = (state) => parseSignedState({ state, secret: stateSecret });
 
+// Loads the pending onboarding session row from wp_wa_configurations.
 const getSessionRecord = async (connection, session, { lock = false } = {}) => {
   const table = getTableName("wa_configurations");
   const lockClause = lock ? "FOR UPDATE" : "";
@@ -110,6 +110,7 @@ const getSessionRecord = async (connection, session, { lock = false } = {}) => {
   return rows?.[0] || null;
 };
 
+// Reads latest Instagram/Facebook connection status for one user_id.
 const getConnectionState = async (userId) => {
   const instagramTable = getTableName("instagram");
   const facebookTable = getTableName("facebook_users");
@@ -161,6 +162,7 @@ const getConnectionState = async (userId) => {
   });
 };
 
+// Upserts social provider error details for troubleshooting/retry UX.
 const updateIntegrationError = async ({ provider, userId, errorMessage, metadata }) => {
   const table = provider === "facebook" ? getTableName("facebook_users") : getTableName("instagram");
   await withConnection((connection) =>
@@ -181,6 +183,7 @@ const updateIntegrationError = async ({ provider, userId, errorMessage, metadata
   });
 };
 
+// Renders onboarding page template and injects runtime config placeholders.
 const renderWppPage = async ({ session, valid }) => {
   const templatePath = path.join(__dirname, "views", "wpp.html");
   const template = await fs.readFile(templatePath, "utf8");
@@ -203,10 +206,12 @@ const renderWppPage = async ({ session, valid }) => {
     .replace('id="facebook-connect"', 'id="facebook-connect" disabled');
 };
 
+// Health probe endpoint for uptime checks/load balancers.
 app.get("/health", (req, res) => {
   res.send("ok");
 });
 
+// Public landing route for onboarding session links.
 app.get("/wpp", async (req, res) => {
   const session = req.query.session;
   if (!validateSessionToken(session)) {
@@ -230,6 +235,7 @@ app.get("/wpp", async (req, res) => {
   res.send(html);
 });
 
+// Returns current connection state for WhatsApp/Instagram/Facebook.
 app.get("/api/connections/state", async (req, res) => {
   const session = req.query.session;
   if (!validateSessionToken(session)) {
@@ -252,6 +258,7 @@ app.get("/api/connections/state", async (req, res) => {
   });
 });
 
+// Starts Instagram/Facebook OAuth by returning provider auth URL.
 app.get("/api/oauth/:provider/start", async (req, res) => {
   const { provider } = req.params;
   const session = req.query.session;
@@ -300,6 +307,7 @@ app.get("/api/oauth/:provider/start", async (req, res) => {
   });
 });
 
+// Handles OAuth callback, exchanges code, and persists provider connection.
 app.get("/api/oauth/:provider/callback", async (req, res) => {
   const { provider } = req.params;
   if (!["instagram", "facebook"].includes(provider)) {
@@ -342,6 +350,7 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
       throw new Error("missing_access_token");
     }
 
+    // Instagram Professional callback branch.
     if (provider === "instagram") {
       const ig = await getInstagramMe({ accessToken });
       if (!ig?.id) {
@@ -386,6 +395,7 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
       );
     }
 
+    // Facebook Pages callback branch.
     if (provider === "facebook") {
       const me = await getFacebookMe({ accessToken });
       const pages = await getFacebookPagesForUser({ accessToken });
@@ -443,6 +453,7 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
   }
 });
 
+// Completes WhatsApp embedded signup and persists WABA credentials.
 app.post("/api/onboarding/complete", limiter, async (req, res) => {
   const { session, code, phone_number_id: phoneNumberId, waba_id: wabaId } = req.body || {};
 
@@ -620,6 +631,7 @@ app.post("/api/onboarding/complete", limiter, async (req, res) => {
   }
 });
 
+// Starts HTTP server for reverse-proxy upstream use.
 const port = Number(process.env.PORT || 3000);
 app.listen(port, "0.0.0.0", () => {
   console.log(`Server listening on port ${port}`);
