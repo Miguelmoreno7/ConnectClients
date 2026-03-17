@@ -1,0 +1,11 @@
+version: "3.9"
+
+services:
+  app:
+    build: .
+    container_name: connect-whatsapp-onboarding
+    env_file:
+      - .env
+    ports:
+      - "${HOST_PORT:-0}:3000"
+    restart: unless-stopped
