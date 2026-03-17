@@ -147,7 +147,7 @@ const getFacebookAccountsWithInstagram = async ({ accessToken }) => {
 // Facebook Graph: gets manageable pages and permissions.
 const getFacebookPagesForUser = async ({ accessToken }) => {
   const response = await axios.get(`${graphBase}/me/accounts`, {
-    params: { fields: "id,name,access_token,perms" },
+    params: { fields: "id,name,access_token,tasks" },
     headers: { Authorization: `Bearer ${accessToken}` }
   });
   return response.data;

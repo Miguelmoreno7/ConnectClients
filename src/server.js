@@ -477,7 +477,7 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
         JSON.stringify(facebookScopes),
         code,
         JSON.stringify(tokenData),
-        JSON.stringify({ page_perms: firstPage?.perms || [] })
+        JSON.stringify({ page_tasks: firstPage?.tasks || [] })
       ];
       await withConnection(async (connection) => {
         try {
