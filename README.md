@@ -54,6 +54,8 @@ INSTAGRAM_SCOPES=instagram_business_basic,instagram_business_content_publish,ins
 
 2) New social integration tables:
 - Ensure `wp_instagram_users` and `wp_facebook_users` already exist in MySQL before starting the app.
+- `wp_facebook_users` should support one row per connected page and must include `user_access_token` and `page_access_token`.
+- During Facebook onboarding, each connected page is also subscribed to app webhooks using `POST /{page-id}/subscribed_apps` with `subscribed_fields=messages,messaging_postbacks,message_deliveries,message_reads,standby,feed`.
 - Recommended social-session columns (optional but used when present): `onboarding_session`, `onboarding_status`, `onboarding_consumed_at`.
 
 ## Meta app settings checklist

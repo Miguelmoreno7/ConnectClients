@@ -18,6 +18,7 @@ const {
   exchangeOAuthCodeForToken,
   getFacebookMe,
   getFacebookPagesForUser,
+  subscribeFacebookPageToWebhooks,
   exchangeInstagramCodeForToken,
   getInstagramMe,
   createSignedState,
@@ -465,35 +466,52 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
     if (provider === "facebook") {
       const me = await getFacebookMe({ accessToken });
       const pages = await getFacebookPagesForUser({ accessToken });
-      const firstPage = pages.data?.[0] || null;
-
       const facebookTable = getTableName("facebook_users");
-      const facebookParams = [
+      const rawPages = pages.data?.length ? pages.data : [];
+      const pageRows = (rawPages.length ? rawPages : [{ id: null, name: null, access_token: null, tasks: [] }]).map((page) => ({
         userId,
-        me.id,
-        firstPage?.id || null,
-        firstPage?.name || null,
-        accessToken,
-        JSON.stringify(facebookScopes),
-        code,
-        JSON.stringify(tokenData),
-        JSON.stringify({ page_tasks: firstPage?.tasks || [] })
-      ];
+        facebookUserId: me.id,
+        pageId: page?.id || null,
+        pageName: page?.name || null,
+        userAccessToken: accessToken,
+        pageAccessToken: page?.access_token || null,
+        scopes: JSON.stringify(facebookScopes),
+        authCode: code,
+        rawAuthPayload: JSON.stringify(tokenData),
+        rawResponse: JSON.stringify({ me, page }),
+        onboardingSession: session,
+        metadata: JSON.stringify({
+          page_tasks: page?.tasks || [],
+          has_page_access_token: Boolean(page?.access_token)
+        })
+      }));
+
+      for (const page of rawPages) {
+        if (!page?.id || !page?.access_token) {
+          throw new Error("missing_page_webhook_subscription_data");
+        }
+        await subscribeFacebookPageToWebhooks({
+          pageId: page.id,
+          pageAccessToken: page.access_token
+        });
+      }
+
       await withConnection(async (connection) => {
-        try {
+        const upsertPage = async (pageRow) => {
           await connection.query(
             `INSERT INTO ${facebookTable}
-            (user_id, status, facebook_user_id, page_id, page_name, access_token,
+            (user_id, status, facebook_user_id, page_id, page_name, user_access_token, page_access_token,
             refresh_token, token_expires_at, scopes, auth_code, raw_auth_payload, raw_response,
             onboarding_session, onboarding_status, onboarding_consumed_at,
             created_at, updated_at, last_connected_at, last_error, metadata)
-            VALUES (?, 'connected', ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, 'completed', NOW(), NOW(), NOW(), NOW(), NULL, ?)
+            VALUES (?, 'connected', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, 'completed', NOW(), NOW(), NOW(), NOW(), NULL, ?)
             ON DUPLICATE KEY UPDATE
               status = VALUES(status),
               facebook_user_id = VALUES(facebook_user_id),
               page_id = VALUES(page_id),
               page_name = VALUES(page_name),
-              access_token = VALUES(access_token),
+              user_access_token = VALUES(user_access_token),
+              page_access_token = VALUES(page_access_token),
               scopes = VALUES(scopes),
               auth_code = VALUES(auth_code),
               raw_auth_payload = VALUES(raw_auth_payload),
@@ -505,32 +523,25 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
               last_connected_at = NOW(),
               last_error = NULL,
               metadata = VALUES(metadata)`,
-            [...facebookParams.slice(0, 8), JSON.stringify({ me, pages }), session, ...facebookParams.slice(8)]
+            [
+              pageRow.userId,
+              pageRow.facebookUserId,
+              pageRow.pageId,
+              pageRow.pageName,
+              pageRow.userAccessToken,
+              pageRow.pageAccessToken,
+              pageRow.scopes,
+              pageRow.authCode,
+              pageRow.rawAuthPayload,
+              pageRow.rawResponse,
+              pageRow.onboardingSession,
+              pageRow.metadata
+            ]
           );
-        } catch (error) {
-          if (error.code !== "ER_BAD_FIELD_ERROR") throw error;
-          await connection.query(
-            `INSERT INTO ${facebookTable}
-            (user_id, status, facebook_user_id, page_id, page_name, access_token,
-            refresh_token, token_expires_at, scopes, auth_code, raw_auth_payload, raw_response,
-            created_at, updated_at, last_connected_at, last_error, metadata)
-            VALUES (?, 'connected', ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, NOW(), NOW(), NOW(), NULL, ?)
-            ON DUPLICATE KEY UPDATE
-              status = VALUES(status),
-              facebook_user_id = VALUES(facebook_user_id),
-              page_id = VALUES(page_id),
-              page_name = VALUES(page_name),
-              access_token = VALUES(access_token),
-              scopes = VALUES(scopes),
-              auth_code = VALUES(auth_code),
-              raw_auth_payload = VALUES(raw_auth_payload),
-              raw_response = VALUES(raw_response),
-              updated_at = NOW(),
-              last_connected_at = NOW(),
-              last_error = NULL,
-              metadata = VALUES(metadata)`,
-            [...facebookParams.slice(0, 8), JSON.stringify({ me, pages }), ...facebookParams.slice(8)]
-          );
+        };
+
+        for (const pageRow of pageRows) {
+          await upsertPage(pageRow);
         }
       });
     }

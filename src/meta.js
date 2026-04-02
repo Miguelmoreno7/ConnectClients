@@ -153,6 +153,20 @@ const getFacebookPagesForUser = async ({ accessToken }) => {
   return response.data;
 };
 
+// Facebook Graph: subscribes a page to app webhooks using page token.
+const subscribeFacebookPageToWebhooks = async ({ pageId, pageAccessToken }) => {
+  const params = new URLSearchParams({
+    subscribed_fields: "messages,messaging_postbacks,message_deliveries,message_reads,standby,feed",
+    access_token: pageAccessToken
+  });
+
+  const response = await axios.post(`${graphBase}/${pageId}/subscribed_apps`, params, {
+    headers: { "Content-Type": "application/x-www-form-urlencoded" }
+  });
+
+  return response.data;
+};
+
 // Instagram Professional OAuth: exchanges code for IG access token.
 const exchangeInstagramCodeForToken = async ({ code, redirectUri }) => {
   const params = new URLSearchParams({
@@ -196,6 +210,7 @@ module.exports = {
   getFacebookMe,
   getFacebookAccountsWithInstagram,
   getFacebookPagesForUser,
+  subscribeFacebookPageToWebhooks,
   exchangeInstagramCodeForToken,
   getInstagramMe,
   createSignedState,
