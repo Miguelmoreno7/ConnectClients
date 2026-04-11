@@ -29,7 +29,7 @@ const app = express();
 
 const graphVersion = process.env.GRAPH_API_VERSION || "v23.0";
 const stateSecret = process.env.SESSION_SECRET || process.env.OAUTH_STATE_SECRET || process.env.IG_APP_SECRET || process.env.FB_CLIENT_SECRET;
-const facebookScopes = (process.env.FACEBOOK_SCOPES || "pages_show_list,pages_read_engagement,pages_manage_metadata,business_management")
+const facebookScopes = (process.env.FACEBOOK_SCOPES || "pages_show_list,pages_read_engagement,pages_manage_metadata,business_management,pages_read_user_engagement,pages_manage_engagement")
   .split(",")
   .map((scope) => scope.trim())
   .filter(Boolean);
