@@ -111,33 +111,30 @@ const getSessionRecord = async (connection, session, { lock = false } = {}) => {
   return rows?.[0] || null;
 };
 
-// Candidate wp_wa_configurations columns that can track social status per hash/session row.
-const socialFlagCandidates = {
-  instagram: ["instagram_connected", "is_instagram_connected", "onboarding_instagram_connected"],
-  facebook: ["facebook_connected", "is_facebook_connected", "onboarding_facebook_connected"]
+// Per-session social status columns used on wp_wa_configurations.
+const socialFlagColumns = {
+  instagram: "instagram_connected",
+  facebook: "facebook_connected"
 };
 
 // Caches detected social flag column names to avoid querying schema on every request.
 let socialFlagColumnsCache = null;
 
-// Detects which wp_wa_configurations columns are available for IG/FB per-session tracking.
+// Detects whether required IG/FB per-session tracking columns exist on wp_wa_configurations.
 const resolveSocialFlagColumns = async (connection) => {
   if (socialFlagColumnsCache) {
     return socialFlagColumnsCache;
   }
 
   const table = getTableName("wa_configurations");
-  const detectColumn = async (candidates) => {
-    for (const column of candidates) {
-      const [rows] = await connection.query(`SHOW COLUMNS FROM ${table} LIKE ?`, [column]);
-      if (rows?.length) return column;
-    }
-    return null;
+  const detectColumn = async (column) => {
+    const [rows] = await connection.query(`SHOW COLUMNS FROM ${table} LIKE ?`, [column]);
+    return rows?.length ? column : null;
   };
 
   socialFlagColumnsCache = {
-    instagram: await detectColumn(socialFlagCandidates.instagram),
-    facebook: await detectColumn(socialFlagCandidates.facebook)
+    instagram: await detectColumn(socialFlagColumns.instagram),
+    facebook: await detectColumn(socialFlagColumns.facebook)
   };
 
   return socialFlagColumnsCache;
@@ -406,58 +403,28 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
         JSON.stringify({ ig_user_id: ig.id })
       ];
       await withConnection(async (connection) => {
-        try {
-          await connection.query(
-            `INSERT INTO ${instagramTable}
-            (user_id, status, instagram_user_id, instagram_username, account_type, access_token,
-            refresh_token, token_expires_at, scopes, auth_code, raw_auth_payload, raw_response,
-            onboarding_session, onboarding_status, onboarding_consumed_at,
-            created_at, updated_at, last_connected_at, last_error, metadata)
-            VALUES (?, 'connected', ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, 'completed', NOW(), NOW(), NOW(), NOW(), NULL, ?)
-            ON DUPLICATE KEY UPDATE
-              status = VALUES(status),
-              instagram_user_id = VALUES(instagram_user_id),
-              instagram_username = VALUES(instagram_username),
-              account_type = VALUES(account_type),
-              access_token = VALUES(access_token),
-              scopes = VALUES(scopes),
-              auth_code = VALUES(auth_code),
-              raw_auth_payload = VALUES(raw_auth_payload),
-              raw_response = VALUES(raw_response),
-              onboarding_session = VALUES(onboarding_session),
-              onboarding_status = 'completed',
-              onboarding_consumed_at = NOW(),
-              updated_at = NOW(),
-              last_connected_at = NOW(),
-              last_error = NULL,
-              metadata = VALUES(metadata)`,
-            [...instagramParams.slice(0, 8), JSON.stringify({ ig }), session, ...instagramParams.slice(8)]
-          );
-        } catch (error) {
-          if (error.code !== "ER_BAD_FIELD_ERROR") throw error;
-          await connection.query(
-            `INSERT INTO ${instagramTable}
-            (user_id, status, instagram_user_id, instagram_username, account_type, access_token,
-            refresh_token, token_expires_at, scopes, auth_code, raw_auth_payload, raw_response,
-            created_at, updated_at, last_connected_at, last_error, metadata)
-            VALUES (?, 'connected', ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, NOW(), NOW(), NOW(), NULL, ?)
-            ON DUPLICATE KEY UPDATE
-              status = VALUES(status),
-              instagram_user_id = VALUES(instagram_user_id),
-              instagram_username = VALUES(instagram_username),
-              account_type = VALUES(account_type),
-              access_token = VALUES(access_token),
-              scopes = VALUES(scopes),
-              auth_code = VALUES(auth_code),
-              raw_auth_payload = VALUES(raw_auth_payload),
-              raw_response = VALUES(raw_response),
-              updated_at = NOW(),
-              last_connected_at = NOW(),
-              last_error = NULL,
-              metadata = VALUES(metadata)`,
-            [...instagramParams.slice(0, 8), JSON.stringify({ ig }), ...instagramParams.slice(8)]
-          );
-        }
+        await connection.query(
+          `INSERT INTO ${instagramTable}
+          (user_id, status, instagram_user_id, instagram_username, account_type, access_token,
+          refresh_token, token_expires_at, scopes, auth_code, raw_auth_payload, raw_response,
+          created_at, updated_at, last_connected_at, last_error, metadata)
+          VALUES (?, 'connected', ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, NOW(), NOW(), NOW(), NULL, ?)
+          ON DUPLICATE KEY UPDATE
+            status = VALUES(status),
+            instagram_user_id = VALUES(instagram_user_id),
+            instagram_username = VALUES(instagram_username),
+            account_type = VALUES(account_type),
+            access_token = VALUES(access_token),
+            scopes = VALUES(scopes),
+            auth_code = VALUES(auth_code),
+            raw_auth_payload = VALUES(raw_auth_payload),
+            raw_response = VALUES(raw_response),
+            updated_at = NOW(),
+            last_connected_at = NOW(),
+            last_error = NULL,
+            metadata = VALUES(metadata)`,
+          [...instagramParams.slice(0, 8), JSON.stringify({ ig }), ...instagramParams.slice(8)]
+        );
       });
 
       await withConnection(async (connection) => {
@@ -487,7 +454,6 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
         authCode: code,
         rawAuthPayload: JSON.stringify(tokenData),
         rawResponse: JSON.stringify({ me, page }),
-        onboardingSession: session,
         metadata: JSON.stringify({
           page_tasks: page?.tasks || [],
           has_page_access_token: Boolean(page?.access_token)
@@ -510,9 +476,8 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
             `INSERT INTO ${facebookTable}
             (user_id, status, facebook_user_id, page_id, page_name, user_access_token, page_access_token,
             refresh_token, token_expires_at, scopes, auth_code, raw_auth_payload, raw_response,
-            onboarding_session, onboarding_status, onboarding_consumed_at,
             created_at, updated_at, last_connected_at, last_error, metadata)
-            VALUES (?, 'connected', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, 'completed', NOW(), NOW(), NOW(), NOW(), NULL, ?)
+            VALUES (?, 'connected', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, NOW(), NOW(), NOW(), NULL, ?)
             ON DUPLICATE KEY UPDATE
               status = VALUES(status),
               facebook_user_id = VALUES(facebook_user_id),
@@ -524,9 +489,6 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
               auth_code = VALUES(auth_code),
               raw_auth_payload = VALUES(raw_auth_payload),
               raw_response = VALUES(raw_response),
-              onboarding_session = VALUES(onboarding_session),
-              onboarding_status = 'completed',
-              onboarding_consumed_at = NOW(),
               updated_at = NOW(),
               last_connected_at = NOW(),
               last_error = NULL,
@@ -542,7 +504,6 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
               pageRow.authCode,
               pageRow.rawAuthPayload,
               pageRow.rawResponse,
-              pageRow.onboardingSession,
               pageRow.metadata
             ]
           );

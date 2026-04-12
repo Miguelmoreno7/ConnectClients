@@ -52,8 +52,8 @@ INSTAGRAM_SCOPES=instagram_business_basic,instagram_business_content_publish,ins
 - `wp_wa_configurations.onboarding_status`
 - `wp_wa_configurations.onboarding_consumed_at`
 - Social status columns on `wp_wa_configurations` for per-hash tracking:
-  - `instagram_connected` (or `is_instagram_connected` / `onboarding_instagram_connected`)
-  - `facebook_connected` (or `is_facebook_connected` / `onboarding_facebook_connected`)
+  - `instagram_connected`
+  - `facebook_connected`
   - Values supported by the app: `1/0`, `true/false`, or `connected/not_connected`.
 
 2) New social integration tables:
