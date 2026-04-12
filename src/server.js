@@ -363,7 +363,7 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
         connection,
         session,
         provider,
-        value: "error"
+        value: 0
       });
     }).catch(() => {});
     res.redirect(`/wpp?session=${encodeURIComponent(session)}&provider=${provider}&status=error`);
@@ -432,7 +432,7 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
           connection,
           session,
           provider: "instagram",
-          value: "connected"
+          value: 1
         });
       });
     }
@@ -519,7 +519,7 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
           connection,
           session,
           provider: "facebook",
-          value: "connected"
+          value: 1
         });
       });
     }
@@ -538,7 +538,7 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
         connection,
         session,
         provider,
-        value: "error"
+        value: 0
       });
     }).catch(() => {});
     console.error(`${provider} callback error: ${errMsg}`);
