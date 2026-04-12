@@ -51,12 +51,16 @@ INSTAGRAM_SCOPES=instagram_business_basic,instagram_business_content_publish,ins
 - `wp_wa_configurations.onboarding_expires_at`
 - `wp_wa_configurations.onboarding_status`
 - `wp_wa_configurations.onboarding_consumed_at`
+- Social status columns on `wp_wa_configurations` for per-hash tracking:
+  - `instagram_connected` (or `is_instagram_connected` / `onboarding_instagram_connected`)
+  - `facebook_connected` (or `is_facebook_connected` / `onboarding_facebook_connected`)
+  - Values supported by the app: `1/0`, `true/false`, or `connected/not_connected`.
 
 2) New social integration tables:
 - Ensure `wp_instagram_users` and `wp_facebook_users` already exist in MySQL before starting the app.
 - `wp_facebook_users` should support one row per connected page and must include `user_access_token` and `page_access_token`.
 - During Facebook onboarding, each connected page is also subscribed to app webhooks using `POST /{page-id}/subscribed_apps` with `subscribed_fields=messages,messaging_postbacks,message_deliveries,message_reads,standby,feed`.
-- Recommended social-session columns (optional but used when present): `onboarding_session`, `onboarding_status`, `onboarding_consumed_at`.
+- The app reads social status for the landing UI from the `wp_wa_configurations` row that matches the current `onboarding_session` hash.
 
 ## Meta app settings checklist
 - **App Domains**: `connect.moviatech.com.mx`

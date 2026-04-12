@@ -29,7 +29,7 @@ const app = express();
 
 const graphVersion = process.env.GRAPH_API_VERSION || "v23.0";
 const stateSecret = process.env.SESSION_SECRET || process.env.OAUTH_STATE_SECRET || process.env.IG_APP_SECRET || process.env.FB_CLIENT_SECRET;
-const facebookScopes = (process.env.FACEBOOK_SCOPES || "pages_show_list,pages_read_engagement,pages_manage_metadata,business_management,pages_read_user_engagement,pages_manage_engagement")
+const facebookScopes = (process.env.FACEBOOK_SCOPES || "pages_show_list,pages_read_engagement,pages_manage_metadata,business_management")
   .split(",")
   .map((scope) => scope.trim())
   .filter(Boolean);
@@ -100,7 +100,7 @@ const getSessionRecord = async (connection, session, { lock = false } = {}) => {
   const table = getTableName("wa_configurations");
   const lockClause = lock ? "FOR UPDATE" : "";
   const [rows] = await connection.query(
-    `SELECT id, user_id, onboarding_status, onboarding_expires_at
+    `SELECT *
      FROM ${table}
      WHERE onboarding_session = ?
        AND onboarding_status = 'pending'
@@ -111,92 +111,80 @@ const getSessionRecord = async (connection, session, { lock = false } = {}) => {
   return rows?.[0] || null;
 };
 
-// Reads latest Instagram/Facebook connection status for one user_id.
-const getConnectionState = async ({ userId, session }) => {
-  const instagramTable = getTableName("instagram_users");
-  const facebookTable = getTableName("facebook_users");
+// Candidate wp_wa_configurations columns that can track social status per hash/session row.
+const socialFlagCandidates = {
+  instagram: ["instagram_connected", "is_instagram_connected", "onboarding_instagram_connected"],
+  facebook: ["facebook_connected", "is_facebook_connected", "onboarding_facebook_connected"]
+};
 
-  return withConnection(async (connection) => {
-    const [igRows] = await connection.query(
-      `SELECT status, instagram_username, account_type, updated_at, last_error, last_connected_at
-       FROM ${instagramTable}
-       WHERE user_id = ?
-       ORDER BY id DESC
-       LIMIT 1`,
-      [userId]
-    ).catch(async (error) => {
-      if (error.code === "ER_NO_SUCH_TABLE") return [[]];
-      throw error;
-    });
+// Caches detected social flag column names to avoid querying schema on every request.
+let socialFlagColumnsCache = null;
 
-    let scopedIgRows = igRows;
-    try {
-      const [bySessionRows] = await connection.query(
-        `SELECT status, instagram_username, account_type, updated_at, last_error, last_connected_at
-         FROM ${instagramTable}
-         WHERE user_id = ?
-           AND onboarding_session = ?
-         ORDER BY id DESC
-         LIMIT 1`,
-        [userId, session]
-      );
-      if (bySessionRows?.length) scopedIgRows = bySessionRows;
-    } catch (error) {
-      if (error.code !== "ER_BAD_FIELD_ERROR" && error.code !== "ER_NO_SUCH_TABLE") {
-        throw error;
-      }
+// Detects which wp_wa_configurations columns are available for IG/FB per-session tracking.
+const resolveSocialFlagColumns = async (connection) => {
+  if (socialFlagColumnsCache) {
+    return socialFlagColumnsCache;
+  }
+
+  const table = getTableName("wa_configurations");
+  const detectColumn = async (candidates) => {
+    for (const column of candidates) {
+      const [rows] = await connection.query(`SHOW COLUMNS FROM ${table} LIKE ?`, [column]);
+      if (rows?.length) return column;
     }
+    return null;
+  };
 
-    const [fbRows] = await connection.query(
-      `SELECT status, page_name, updated_at, last_error, last_connected_at
-       FROM ${facebookTable}
-       WHERE user_id = ?
-       ORDER BY id DESC
-       LIMIT 1`,
-      [userId]
-    ).catch((error) => {
-      if (error.code === "ER_NO_SUCH_TABLE") return [[]];
-      throw error;
-    });
+  socialFlagColumnsCache = {
+    instagram: await detectColumn(socialFlagCandidates.instagram),
+    facebook: await detectColumn(socialFlagCandidates.facebook)
+  };
 
-    let scopedFbRows = fbRows;
-    try {
-      const [bySessionRows] = await connection.query(
-        `SELECT status, page_name, updated_at, last_error, last_connected_at
-         FROM ${facebookTable}
-         WHERE user_id = ?
-           AND onboarding_session = ?
-         ORDER BY id DESC
-         LIMIT 1`,
-        [userId, session]
-      );
-      if (bySessionRows?.length) scopedFbRows = bySessionRows;
-    } catch (error) {
-      if (error.code !== "ER_BAD_FIELD_ERROR" && error.code !== "ER_NO_SUCH_TABLE") {
-        throw error;
-      }
-    }
+  return socialFlagColumnsCache;
+};
 
-    return {
-      instagram: scopedIgRows?.[0]
-        ? {
-            status: scopedIgRows[0].status,
-            label: scopedIgRows[0].instagram_username || "Instagram account",
-            account_type: scopedIgRows[0].account_type || null,
-            last_error: scopedIgRows[0].last_error || null,
-            last_connected_at: scopedIgRows[0].last_connected_at || null
-          }
-        : { status: "not_connected" },
-      facebook: scopedFbRows?.[0]
-        ? {
-            status: scopedFbRows[0].status,
-            label: scopedFbRows[0].page_name || "Facebook page",
-            last_error: scopedFbRows[0].last_error || null,
-            last_connected_at: scopedFbRows[0].last_connected_at || null
-          }
-        : { status: "not_connected" }
-    };
-  });
+// Converts stored DB values (tinyint/varchar) into a UI-friendly connection status.
+const normalizeConnectionStatus = (value) => {
+  if (value === null || value === undefined || value === "") return "not_connected";
+  if (typeof value === "number") return value > 0 ? "connected" : "not_connected";
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "connected", "completed", "success"].includes(normalized)) return "connected";
+  if (["0", "false", "not_connected", "disconnected", "none"].includes(normalized)) return "not_connected";
+  if (["pending", "connecting"].includes(normalized)) return "pending";
+  if (["error", "failed", "failure"].includes(normalized)) return "error";
+  return "not_connected";
+};
+
+// Builds per-provider status payload from wp_wa_configurations row using detected social columns.
+const getConnectionStateFromSessionRow = ({ sessionRow, socialColumns }) => {
+  const whatsappStatus = sessionRow.phone_number_id ? "connected" : "pending";
+
+  const instagramRaw = socialColumns.instagram ? sessionRow[socialColumns.instagram] : null;
+  const facebookRaw = socialColumns.facebook ? sessionRow[socialColumns.facebook] : null;
+
+  return {
+    whatsapp: { status: whatsappStatus },
+    instagram: { status: normalizeConnectionStatus(instagramRaw) },
+    facebook: { status: normalizeConnectionStatus(facebookRaw) }
+  };
+};
+
+// Updates IG/FB per-session status flag on wp_wa_configurations for the current onboarding hash.
+const updateSessionSocialFlag = async ({ connection, session, provider, value }) => {
+  const socialColumns = await resolveSocialFlagColumns(connection);
+  const targetColumn = socialColumns[provider];
+  if (!targetColumn) return;
+
+  const table = getTableName("wa_configurations");
+  await connection.query(
+    `UPDATE ${table}
+     SET ${targetColumn} = ?
+     WHERE onboarding_session = ?
+       AND onboarding_status = 'pending'
+       AND onboarding_expires_at > NOW()
+     LIMIT 1`,
+    [value, session]
+  );
 };
 
 // Upserts social provider error details for troubleshooting/retry UX.
@@ -286,10 +274,13 @@ app.get("/api/connections/state", async (req, res) => {
     return;
   }
 
-  const integrations = await getConnectionState({ userId: sessionRow.user_id, session });
+  const integrations = await withConnection(async (connection) => {
+    const socialColumns = await resolveSocialFlagColumns(connection);
+    return getConnectionStateFromSessionRow({ sessionRow, socialColumns });
+  });
   res.json({
     ok: true,
-    whatsapp: { status: "pending" },
+    whatsapp: integrations.whatsapp,
     instagram: integrations.instagram,
     facebook: integrations.facebook
   });
@@ -370,6 +361,14 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
       errorMessage: `${error}: ${errorDescription || "OAuth cancelled"}`,
       metadata: { callback_error: error }
     });
+    await withConnection(async (connection) => {
+      await updateSessionSocialFlag({
+        connection,
+        session,
+        provider,
+        value: "error"
+      });
+    }).catch(() => {});
     res.redirect(`/wpp?session=${encodeURIComponent(session)}&provider=${provider}&status=error`);
     return;
   }
@@ -460,6 +459,15 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
           );
         }
       });
+
+      await withConnection(async (connection) => {
+        await updateSessionSocialFlag({
+          connection,
+          session,
+          provider: "instagram",
+          value: "connected"
+        });
+      });
     }
 
     // Facebook Pages callback branch.
@@ -544,6 +552,15 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
           await upsertPage(pageRow);
         }
       });
+
+      await withConnection(async (connection) => {
+        await updateSessionSocialFlag({
+          connection,
+          session,
+          provider: "facebook",
+          value: "connected"
+        });
+      });
     }
 
     res.redirect(`/wpp?session=${encodeURIComponent(session)}&provider=${provider}&status=connected`);
@@ -555,6 +572,14 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
       errorMessage: errMsg,
       metadata: { code: maskValue(code || "") }
     });
+    await withConnection(async (connection) => {
+      await updateSessionSocialFlag({
+        connection,
+        session,
+        provider,
+        value: "error"
+      });
+    }).catch(() => {});
     console.error(`${provider} callback error: ${errMsg}`);
     res.redirect(`/wpp?session=${encodeURIComponent(session)}&provider=${provider}&status=error`);
   }
