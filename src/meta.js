@@ -144,13 +144,24 @@ const getFacebookAccountsWithInstagram = async ({ accessToken }) => {
   return response.data;
 };
 
-// Facebook Graph: gets manageable pages and permissions.
+// Facebook Graph: gets all manageable pages and permissions across paginated results.
 const getFacebookPagesForUser = async ({ accessToken }) => {
-  const response = await axios.get(`${graphBase}/me/accounts`, {
-    params: { fields: "id,name,access_token,tasks" },
-    headers: { Authorization: `Bearer ${accessToken}` }
-  });
-  return response.data;
+  const pages = [];
+  let nextUrl = `${graphBase}/me/accounts`;
+  let params = { fields: "id,name,access_token,tasks", limit: 100 };
+
+  while (nextUrl) {
+    const response = await axios.get(nextUrl, {
+      params,
+      headers: { Authorization: `Bearer ${accessToken}` }
+    });
+
+    pages.push(...(response.data?.data || []));
+    nextUrl = response.data?.paging?.next || null;
+    params = undefined;
+  }
+
+  return { data: pages };
 };
 
 // Facebook Graph: subscribes a page to app webhooks using page token.

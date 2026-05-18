@@ -51,6 +51,7 @@ INSTAGRAM_SCOPES=instagram_business_basic,instagram_business_content_publish,ins
 - `wp_wa_configurations.onboarding_expires_at`
 - `wp_wa_configurations.onboarding_status`
 - `wp_wa_configurations.onboarding_consumed_at`
+- `wp_wa_configurations.allowedChannels` CSV of enabled channels for the exact onboarding hash, for example `WHATSAPP,INSTAGRAM` or `WHATSAPP,INSTAGRAM,FACEBOOK`.
 - Social status columns on `wp_wa_configurations` for per-hash tracking:
   - `instagram_connected`
   - `facebook_connected`
@@ -59,6 +60,7 @@ INSTAGRAM_SCOPES=instagram_business_basic,instagram_business_content_publish,ins
 2) New social integration tables:
 - Ensure `wp_instagram_users` and `wp_facebook_users` already exist in MySQL before starting the app.
 - `wp_facebook_users` should support one row per connected page and must include `user_access_token` and `page_access_token`.
+- `wp_facebook_users` must allow multiple rows for the same `user_id`; use a unique key on `(user_id, page_id)` (or no `user_id`-only unique key) so multiple selected Facebook Pages can be saved.
 - During Facebook onboarding, each connected page is also subscribed to app webhooks using `POST /{page-id}/subscribed_apps` with `subscribed_fields=messages,messaging_postbacks,message_deliveries,message_reads,standby,feed`.
 - The app reads social status for the landing UI from the `wp_wa_configurations` row that matches the current `onboarding_session` hash.
 

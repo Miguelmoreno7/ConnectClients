@@ -29,7 +29,7 @@ const app = express();
 
 const graphVersion = process.env.GRAPH_API_VERSION || "v23.0";
 const stateSecret = process.env.SESSION_SECRET || process.env.OAUTH_STATE_SECRET || process.env.IG_APP_SECRET || process.env.FB_CLIENT_SECRET;
-const facebookScopes = (process.env.FACEBOOK_SCOPES || "pages_show_list,pages_read_engagement,pages_manage_metadata,business_management,pages_read_user_content,pages_manage_engagement")
+const facebookScopes = (process.env.FACEBOOK_SCOPES || "pages_show_list,pages_read_engagement,pages_manage_metadata,business_management")
   .split(",")
   .map((scope) => scope.trim())
   .filter(Boolean);
@@ -110,6 +110,48 @@ const getSessionRecord = async (connection, session, { lock = false } = {}) => {
   );
   return rows?.[0] || null;
 };
+
+
+// Provider names normalized to the values stored in wp_wa_configurations.allowedChannels.
+const channelNames = {
+  whatsapp: "WHATSAPP",
+  instagram: "INSTAGRAM",
+  facebook: "FACEBOOK"
+};
+
+// Reads allowedChannels from the session row while tolerating common column casing variants.
+const getAllowedChannelsValue = (sessionRow) => (
+  sessionRow?.allowedChannels ??
+  sessionRow?.allowed_channels ??
+  sessionRow?.allowedchannels ??
+  null
+);
+
+// Parses the CSV allowedChannels field into an uppercase channel set.
+const parseAllowedChannels = (value) => {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return new Set(Object.values(channelNames));
+  }
+
+  return new Set(
+    String(value)
+      .split(",")
+      .map((channel) => channel.trim().toUpperCase())
+      .filter(Boolean)
+  );
+};
+
+// Determines if a provider is enabled for this exact onboarding session/hash.
+const isChannelAllowed = ({ sessionRow, provider }) => (
+  parseAllowedChannels(getAllowedChannelsValue(sessionRow)).has(channelNames[provider])
+);
+
+// Builds frontend-friendly allowed flags for all supported channels.
+const getAllowedChannelState = (sessionRow) => ({
+  whatsapp: isChannelAllowed({ sessionRow, provider: "whatsapp" }),
+  instagram: isChannelAllowed({ sessionRow, provider: "instagram" }),
+  facebook: isChannelAllowed({ sessionRow, provider: "facebook" })
+});
 
 // Per-session social status columns used on wp_wa_configurations.
 const socialFlagColumns = {
@@ -277,6 +319,7 @@ app.get("/api/connections/state", async (req, res) => {
   });
   res.json({
     ok: true,
+    allowed_channels: getAllowedChannelState(sessionRow),
     whatsapp: integrations.whatsapp,
     instagram: integrations.instagram,
     facebook: integrations.facebook
@@ -301,6 +344,11 @@ app.get("/api/oauth/:provider/start", async (req, res) => {
   const sessionRow = await withConnection((connection) => getSessionRecord(connection, session));
   if (!sessionRow) {
     res.status(404).json({ ok: false, message: "Session not found or expired." });
+    return;
+  }
+
+  if (!isChannelAllowed({ sessionRow, provider })) {
+    res.status(403).json({ ok: false, message: `${provider} is not allowed for this onboarding link.` });
     return;
   }
 
@@ -350,6 +398,17 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
 
   const session = statePayload.session;
   const userId = Number(statePayload.userId);
+  const callbackSessionRow = await withConnection((connection) => getSessionRecord(connection, session));
+
+  if (!callbackSessionRow) {
+    res.status(400).send("Session not found or expired");
+    return;
+  }
+
+  if (!isChannelAllowed({ sessionRow: callbackSessionRow, provider })) {
+    res.redirect(`/wpp?session=${encodeURIComponent(session)}&provider=${provider}&status=error`);
+    return;
+  }
 
   if (error) {
     await updateIntegrationError({
@@ -443,7 +502,10 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
       const pages = await getFacebookPagesForUser({ accessToken });
       const facebookTable = getTableName("facebook_users");
       const rawPages = pages.data?.length ? pages.data : [];
-      const pageRows = (rawPages.length ? rawPages : [{ id: null, name: null, access_token: null, tasks: [] }]).map((page) => ({
+      if (!rawPages.length) {
+        throw new Error("no_facebook_pages_selected");
+      }
+      const pageRows = rawPages.map((page) => ({
         userId,
         facebookUserId: me.id,
         pageId: page?.id || null,
@@ -471,46 +533,77 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
       }
 
       await withConnection(async (connection) => {
-        const upsertPage = async (pageRow) => {
-          await connection.query(
-            `INSERT INTO ${facebookTable}
-            (user_id, status, facebook_user_id, page_id, page_name, user_access_token, page_access_token,
-            refresh_token, token_expires_at, scopes, auth_code, raw_auth_payload, raw_response,
-            created_at, updated_at, last_connected_at, last_error, metadata)
-            VALUES (?, 'connected', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, NOW(), NOW(), NOW(), NULL, ?)
-            ON DUPLICATE KEY UPDATE
-              status = VALUES(status),
-              facebook_user_id = VALUES(facebook_user_id),
-              page_id = VALUES(page_id),
-              page_name = VALUES(page_name),
-              user_access_token = VALUES(user_access_token),
-              page_access_token = VALUES(page_access_token),
-              scopes = VALUES(scopes),
-              auth_code = VALUES(auth_code),
-              raw_auth_payload = VALUES(raw_auth_payload),
-              raw_response = VALUES(raw_response),
-              updated_at = NOW(),
-              last_connected_at = NOW(),
-              last_error = NULL,
-              metadata = VALUES(metadata)`,
-            [
-              pageRow.userId,
-              pageRow.facebookUserId,
-              pageRow.pageId,
-              pageRow.pageName,
-              pageRow.userAccessToken,
-              pageRow.pageAccessToken,
-              pageRow.scopes,
-              pageRow.authCode,
-              pageRow.rawAuthPayload,
-              pageRow.rawResponse,
-              pageRow.metadata
-            ]
+        const savePage = async (pageRow) => {
+          const [existingRows] = await connection.query(
+            `SELECT id FROM ${facebookTable} WHERE user_id = ? AND page_id = ? LIMIT 1`,
+            [pageRow.userId, pageRow.pageId]
           );
+
+          const params = [
+            pageRow.facebookUserId,
+            pageRow.pageName,
+            pageRow.userAccessToken,
+            pageRow.pageAccessToken,
+            pageRow.scopes,
+            pageRow.authCode,
+            pageRow.rawAuthPayload,
+            pageRow.rawResponse,
+            pageRow.metadata
+          ];
+
+          if (existingRows?.[0]?.id) {
+            await connection.query(
+              `UPDATE ${facebookTable}
+               SET status = 'connected',
+                   facebook_user_id = ?,
+                   page_name = ?,
+                   user_access_token = ?,
+                   page_access_token = ?,
+                   scopes = ?,
+                   auth_code = ?,
+                   raw_auth_payload = ?,
+                   raw_response = ?,
+                   updated_at = NOW(),
+                   last_connected_at = NOW(),
+                   last_error = NULL,
+                   metadata = ?
+               WHERE id = ?`,
+              [...params, existingRows[0].id]
+            );
+            return;
+          }
+
+          try {
+            await connection.query(
+              `INSERT INTO ${facebookTable}
+              (user_id, status, facebook_user_id, page_id, page_name, user_access_token, page_access_token,
+              refresh_token, token_expires_at, scopes, auth_code, raw_auth_payload, raw_response,
+              created_at, updated_at, last_connected_at, last_error, metadata)
+              VALUES (?, 'connected', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, NOW(), NOW(), NOW(), NULL, ?)`,
+              [
+                pageRow.userId,
+                pageRow.facebookUserId,
+                pageRow.pageId,
+                pageRow.pageName,
+                pageRow.userAccessToken,
+                pageRow.pageAccessToken,
+                pageRow.scopes,
+                pageRow.authCode,
+                pageRow.rawAuthPayload,
+                pageRow.rawResponse,
+                pageRow.metadata
+              ]
+            );
+          } catch (error) {
+            if (error.code === "ER_DUP_ENTRY") {
+              throw new Error("wp_facebook_users must allow multiple rows per user; use a unique key on (user_id, page_id), not user_id only");
+            }
+            throw error;
+          }
         };
 
         for (const pageRow of pageRows) {
-          await upsertPage(pageRow);
+          await savePage(pageRow);
         }
       });
 
@@ -579,6 +672,16 @@ app.post("/api/onboarding/complete", limiter, async (req, res) => {
       }
 
       const { id, user_id: userId } = sessionRecord;
+
+      if (!isChannelAllowed({ sessionRow: sessionRecord, provider: "whatsapp" })) {
+        await connection.rollback();
+        return {
+          error: {
+            status: 403,
+            payload: { ok: false, step: "validate_session", message: "WhatsApp is not allowed for this onboarding link." }
+          }
+        };
+      }
 
       if (process.env.ADMIN_WHITELIST) {
         try {

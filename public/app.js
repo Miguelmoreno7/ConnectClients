@@ -14,7 +14,12 @@
     code: null,
     phoneNumberId: null,
     wabaId: null,
-    submitting: false
+    submitting: false,
+    allowedChannels: {
+      whatsapp: true,
+      instagram: true,
+      facebook: true
+    }
   };
 
   // Updates main status message with optional success/error styling.
@@ -42,7 +47,7 @@
     if (cls) badge.classList.add(cls);
   };
 
-  const applyProviderState = ({ provider, status: providerStatus, label }) => {
+  const applyProviderState = ({ provider, status: providerStatus, label, allowed = true }) => {
     const map = {
       instagram: { button: instagramButtonEl, badge: instagramBadgeEl },
       facebook: { button: facebookButtonEl, badge: facebookBadgeEl },
@@ -51,6 +56,12 @@
 
     const target = map[provider];
     if (!target) return;
+
+    if (!allowed) {
+      setBubble(target.badge, "Not allowed", "error");
+      setButtonBusy(target.button, true);
+      return;
+    }
 
     if (providerStatus === "connected" || providerStatus === "completed") {
       setBubble(target.badge, label ? `Connected: ${label}` : "Connected", "connected");
@@ -82,19 +93,28 @@
       const data = await response.json();
       if (!response.ok || !data.ok) return;
 
+      state.allowedChannels = {
+        whatsapp: data.allowed_channels?.whatsapp !== false,
+        instagram: data.allowed_channels?.instagram !== false,
+        facebook: data.allowed_channels?.facebook !== false
+      };
+
       applyProviderState({
         provider: "instagram",
         status: data.instagram?.status,
-        label: data.instagram?.label
+        label: data.instagram?.label,
+        allowed: state.allowedChannels.instagram
       });
       applyProviderState({
         provider: "facebook",
         status: data.facebook?.status,
-        label: data.facebook?.label
+        label: data.facebook?.label,
+        allowed: state.allowedChannels.facebook
       });
       applyProviderState({
         provider: "whatsapp",
-        status: data.whatsapp?.status
+        status: data.whatsapp?.status,
+        allowed: state.allowedChannels.whatsapp
       });
     } catch {
       // Best effort, keep UI defaults if state endpoint fails.
@@ -174,6 +194,10 @@
 
   // Starts WhatsApp Embedded Signup popup flow.
   const launchEmbeddedSignup = () => {
+    if (!state.allowedChannels.whatsapp) {
+      setStatus("WhatsApp is not allowed for this onboarding link.", "error");
+      return;
+    }
     if (typeof window.initFacebookSDKOnce === "function") {
       window.initFacebookSDKOnce();
     }
@@ -197,6 +221,10 @@
   // Starts OAuth flow for Instagram/Facebook via backend start endpoint.
   const startOAuthConnection = async (provider, button, label) => {
     if (!button) return;
+    if (!state.allowedChannels[provider]) {
+      setStatus(`${label} is not allowed for this onboarding link.`, "error");
+      return;
+    }
     try {
       setButtonBusy(button, true);
       setStatus(`Starting ${label} connection…`);
