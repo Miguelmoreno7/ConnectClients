@@ -211,6 +211,25 @@ const getInstagramMe = async ({ accessToken }) => {
   return response.data;
 };
 
+// Webapp callback: notifies the main application about onboarding channel status.
+const sendOnboardingCallback = async (payload) => {
+  const callbackUrl = process.env.URL_CALLBACK_WEBAPP;
+  const callbackSecret = process.env.ONBOARDING_CALLBACK_SECRET;
+
+  if (!callbackUrl || !callbackSecret) {
+    return { skipped: true };
+  }
+
+  const response = await axios.post(callbackUrl, payload, {
+    headers: {
+      "Content-Type": "application/json",
+      "x-onboarding-secret": callbackSecret
+    }
+  });
+
+  return response.data;
+};
+
 module.exports = {
   exchangeCodeForToken,
   getPhoneNumberDetails,
@@ -224,6 +243,7 @@ module.exports = {
   subscribeFacebookPageToWebhooks,
   exchangeInstagramCodeForToken,
   getInstagramMe,
+  sendOnboardingCallback,
   createSignedState,
   parseSignedState
 };

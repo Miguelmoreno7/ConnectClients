@@ -21,6 +21,7 @@ const {
   subscribeFacebookPageToWebhooks,
   exchangeInstagramCodeForToken,
   getInstagramMe,
+  sendOnboardingCallback,
   createSignedState,
   parseSignedState
 } = require("./meta");
@@ -29,7 +30,7 @@ const app = express();
 
 const graphVersion = process.env.GRAPH_API_VERSION || "v23.0";
 const stateSecret = process.env.SESSION_SECRET || process.env.OAUTH_STATE_SECRET || process.env.IG_APP_SECRET || process.env.FB_CLIENT_SECRET;
-const facebookScopes = (process.env.FACEBOOK_SCOPES || "pages_show_list,pages_read_engagement,pages_manage_metadata,business_management")
+const facebookScopes = (process.env.FACEBOOK_SCOPES || "pages_show_list,pages_read_engagement,pages_manage_metadata,pages_messaging,business_management")
   .split(",")
   .map((scope) => scope.trim())
   .filter(Boolean);
@@ -206,6 +207,42 @@ const getConnectionStateFromSessionRow = ({ sessionRow, socialColumns }) => {
     instagram: { status: normalizeConnectionStatus(instagramRaw) },
     facebook: { status: normalizeConnectionStatus(facebookRaw) }
   };
+};
+
+
+// Sends the cross-application onboarding callback without leaking secrets or breaking the user flow.
+const notifyOnboardingCallback = async (payload) => {
+  try {
+    await sendOnboardingCallback(payload);
+  } catch (error) {
+    const callbackError = error?.response?.data?.message || error?.response?.statusText || error.message;
+    console.error(`Onboarding callback failed for ${payload.channel}: ${callbackError}`);
+  }
+};
+
+// Joins multiple provider values for callback payload fields while omitting empty values.
+const joinCallbackValues = (values) => values.filter(Boolean).join(",");
+
+// Builds the status callback payload expected by the main web application.
+const buildOnboardingCallbackPayload = ({
+  onboardingSession,
+  channel,
+  providerAccountId,
+  providerResourceId,
+  displayName,
+  status
+}) => {
+  const payload = {
+    onboardingSession,
+    channel,
+    providerAccountId,
+    status
+  };
+
+  if (providerResourceId) payload.providerResourceId = providerResourceId;
+  if (displayName) payload.displayName = displayName;
+
+  return payload;
 };
 
 // Updates IG/FB per-session status flag on wp_wa_configurations for the current onboarding hash.
@@ -398,6 +435,7 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
 
   const session = statePayload.session;
   const userId = Number(statePayload.userId);
+  let statusCallbackPayload = null;
   const callbackSessionRow = await withConnection((connection) => getSessionRecord(connection, session));
 
   if (!callbackSessionRow) {
@@ -425,6 +463,11 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
         value: 0
       });
     }).catch(() => {});
+    await notifyOnboardingCallback(buildOnboardingCallbackPayload({
+      onboardingSession: session,
+      channel: channelNames[provider],
+      status: "REQUIRES_ATTENTION"
+    }));
     res.redirect(`/wpp?session=${encodeURIComponent(session)}&provider=${provider}&status=error`);
     return;
   }
@@ -486,6 +529,14 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
         );
       });
 
+      statusCallbackPayload = buildOnboardingCallbackPayload({
+        onboardingSession: session,
+        channel: "INSTAGRAM",
+        providerAccountId: ig.id,
+        displayName: ig.username || null,
+        status: "CONNECTED"
+      });
+
       await withConnection(async (connection) => {
         await updateSessionSocialFlag({
           connection,
@@ -494,6 +545,7 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
           value: 1
         });
       });
+      await notifyOnboardingCallback(statusCallbackPayload);
     }
 
     // Facebook Pages callback branch.
@@ -521,6 +573,13 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
           has_page_access_token: Boolean(page?.access_token)
         })
       }));
+      statusCallbackPayload = buildOnboardingCallbackPayload({
+        onboardingSession: session,
+        channel: "FACEBOOK",
+        providerAccountId: joinCallbackValues(pageRows.map((page) => page.pageId)),
+        displayName: joinCallbackValues(pageRows.map((page) => page.pageName)),
+        status: "CONNECTED"
+      });
 
       for (const page of rawPages) {
         if (!page?.id || !page?.access_token) {
@@ -615,6 +674,7 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
           value: 1
         });
       });
+      await notifyOnboardingCallback(statusCallbackPayload);
     }
 
     res.redirect(`/wpp?session=${encodeURIComponent(session)}&provider=${provider}&status=connected`);
@@ -634,6 +694,14 @@ app.get("/api/oauth/:provider/callback", async (req, res) => {
         value: 0
       });
     }).catch(() => {});
+    await notifyOnboardingCallback({
+      ...(statusCallbackPayload || buildOnboardingCallbackPayload({
+        onboardingSession: session,
+        channel: channelNames[provider],
+        status: "REQUIRES_ATTENTION"
+      })),
+      status: "REQUIRES_ATTENTION"
+    });
     console.error(`${provider} callback error: ${errMsg}`);
     res.redirect(`/wpp?session=${encodeURIComponent(session)}&provider=${provider}&status=error`);
   }
@@ -797,12 +865,29 @@ app.post("/api/onboarding/complete", limiter, async (req, res) => {
       return;
     }
 
+    await notifyOnboardingCallback(buildOnboardingCallbackPayload({
+      onboardingSession: session,
+      channel: "WHATSAPP",
+      providerAccountId: result.payload.waba_id,
+      providerResourceId: result.payload.phone_number_id,
+      displayName: result.payload.waba_name,
+      status: "CONNECTED"
+    }));
+
     res.json(result.payload);
   } catch (error) {
     const message = error?.message || "Unexpected error";
     const [step, detail] = message.includes(":") ? message.split(/:(.+)/) : ["unknown", message];
 
     if (["exchange_code", "verify_number", "register_number", "waba_name", "subscribe_apps", "db_write"].includes(step)) {
+      await notifyOnboardingCallback(buildOnboardingCallbackPayload({
+        onboardingSession: session,
+        channel: "WHATSAPP",
+        providerAccountId: wabaId,
+        providerResourceId: phoneNumberId,
+        status: "REQUIRES_ATTENTION"
+      }));
+
       const codeMap = {
         exchange_code: 502,
         verify_number: 502,

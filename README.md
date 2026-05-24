@@ -39,10 +39,12 @@ TOKEN_TTL_HOURS=72
 RATE_LIMIT_PER_MIN=20
 OAUTH_STATE_SECRET=change-me
 SESSION_SECRET=change-me
-FACEBOOK_SCOPES=pages_show_list,pages_read_engagement,pages_manage_metadata,business_management
+FACEBOOK_SCOPES=pages_show_list,pages_read_engagement,pages_manage_metadata,pages_messaging,business_management
 IG_APP_ID=...
 IG_APP_SECRET=...
 INSTAGRAM_SCOPES=instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments
+URL_CALLBACK_WEBAPP=https://your-webapp.example.com/onboarding/callback
+ONBOARDING_CALLBACK_SECRET=change-me
 ```
 
 ## Required DB schema changes
@@ -63,6 +65,26 @@ INSTAGRAM_SCOPES=instagram_business_basic,instagram_business_content_publish,ins
 - `wp_facebook_users` must allow multiple rows for the same `user_id`; use a unique key on `(user_id, page_id)` (or no `user_id`-only unique key) so multiple selected Facebook Pages can be saved.
 - During Facebook onboarding, each connected page is also subscribed to app webhooks using `POST /{page-id}/subscribed_apps` with `subscribed_fields=messages,messaging_postbacks,message_deliveries,message_reads,standby,feed`.
 - The app reads social status for the landing UI from the `wp_wa_configurations` row that matches the current `onboarding_session` hash.
+
+## Web application onboarding callback
+When a channel finishes successfully or requires attention, the service can notify your main web application if these env vars are set:
+
+- `URL_CALLBACK_WEBAPP`: callback endpoint URL.
+- `ONBOARDING_CALLBACK_SECRET`: value sent in the `x-onboarding-secret` header.
+
+Payload shape:
+```json
+{
+  "onboardingSession": "session-hash",
+  "channel": "WHATSAPP|FACEBOOK|INSTAGRAM",
+  "providerAccountId": "provider account id(s)",
+  "providerResourceId": "optional resource id",
+  "displayName": "optional display name(s)",
+  "status": "CONNECTED|REQUIRES_ATTENTION"
+}
+```
+
+For Facebook, multiple selected page IDs and page names are sent as comma-separated values.
 
 ## Meta app settings checklist
 - **App Domains**: `connect.moviatech.com.mx`
